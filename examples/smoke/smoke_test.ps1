@@ -112,6 +112,43 @@ try {
         throw 'HTML canvas dropped the configured English font alias from its selector.'
     }
 
+    # Serve mode: the reviewer's edit must round-trip back to disk, and a malformed
+    # payload must never overwrite the config.
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $probe.Start()
+    $servePort = $probe.LocalEndpoint.Port
+    $probe.Stop()
+
+    $serveConfigPath = Join-Path $testRoot 'poster-config.json'
+    $reviewedPath = Join-Path $testRoot 'reviewed-config.json'
+    $reviewed = Get-Content -Raw -Encoding UTF8 -LiteralPath $serveConfigPath | ConvertFrom-Json
+    $reviewed.texts[0].x = 999
+    $reviewedBody = $reviewed | ConvertTo-Json -Depth 20
+
+    $poster = Start-Job -ArgumentList "http://localhost:$servePort", $reviewedBody -ScriptBlock {
+        param($BaseUrl, $Body)
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try { Invoke-WebRequest -Uri "$BaseUrl/" -UseBasicParsing -TimeoutSec 5 | Out-Null; break }
+            catch { Start-Sleep -Milliseconds 500 }
+        }
+        $rejected = $false
+        try { Invoke-WebRequest -Uri "$BaseUrl/save" -Method Post -Body 'not json' -ContentType 'application/json' -UseBasicParsing | Out-Null }
+        catch { $rejected = $true }
+        Invoke-WebRequest -Uri "$BaseUrl/save" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($Body)) -ContentType 'application/json' -UseBasicParsing | Out-Null
+        return $rejected
+    }
+
+    & $canvasBuilder -ConfigPath $serveConfigPath -OutputPath (Join-Path $testRoot 'serve-canvas.html') -Serve -Port $servePort -TimeoutMinutes 2 -SaveConfigPath $reviewedPath -NoBrowser | Out-Null
+    $rejectedGarbage = [bool](Receive-Job -Job $poster -Wait)
+    Remove-Job -Job $poster -Force
+
+    if (-not $rejectedGarbage) { throw 'Serve mode accepted a payload that was not valid JSON.' }
+    if (-not (Test-Path -LiteralPath $reviewedPath)) { throw 'Serve mode did not write the reviewed config back to disk.' }
+    $savedBack = Get-Content -Raw -Encoding UTF8 -LiteralPath $reviewedPath | ConvertFrom-Json
+    if ([int]$savedBack.texts[0].x -ne 999) { throw "Serve mode lost the reviewer's edit: x is $($savedBack.texts[0].x)." }
+    $untouched = Get-Content -Raw -Encoding UTF8 -LiteralPath $serveConfigPath | ConvertFrom-Json
+    if ([int]$untouched.texts[0].x -eq 999) { throw 'Serve mode overwrote the source config despite -SaveConfigPath.' }
+
     . (Join-Path $repoRoot 'scripts\layout_checks.ps1')
     Assert-ViewingDistanceMinimum 1 'title' 120
     Assert-ViewingDistanceMinimum 1 'body' 50
@@ -187,6 +224,7 @@ try {
         ViewingDistanceGuard = '1m/3m/5m table verified'
         ContrastGuard = 'isolated failure verified'
         BackgroundNoise = 'warning without hard failure verified'
+        ServeRoundTrip = 'edit saved back, bad payload rejected'
     } | Format-List
 }
 finally {

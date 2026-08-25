@@ -2,7 +2,12 @@
     [Parameter(Mandatory = $true)]
     [string]$ConfigPath,
     [string]$OutputPath = '',
-    [string]$ConceptPath = ''
+    [string]$ConceptPath = '',
+    [switch]$Serve,
+    [int]$Port = 0,
+    [int]$TimeoutMinutes = 30,
+    [string]$SaveConfigPath = '',
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +28,139 @@ function Get-PosterDataUri([string]$Path) {
         default { 'image/png' }
     }
     return "data:$mime;base64,$([Convert]::ToBase64String([IO.File]::ReadAllBytes($Path)))"
+}
+
+function Write-PosterCanvasResponse(
+    [System.Net.HttpListenerResponse]$Response,
+    [int]$Status,
+    [string]$ContentType,
+    [string]$Body
+) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Body)
+    $Response.StatusCode = $Status
+    $Response.ContentType = $ContentType
+    $Response.ContentLength64 = $bytes.Length
+    $Response.OutputStream.Write($bytes, 0, $bytes.Length)
+    $Response.Close()
+}
+
+function Receive-PosterCanvasEdit([string]$Html, [int]$Port, [int]$TimeoutMinutes, [bool]$OpenBrowser) {
+    if ($Port -le 0) {
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $probe.Start()
+        $Port = $probe.LocalEndpoint.Port
+        $probe.Stop()
+    }
+
+    $url = "http://localhost:$Port/"
+    $listener = [System.Net.HttpListener]::new()
+    $listener.Prefixes.Add($url)
+    try {
+        $listener.Start()
+    }
+    catch {
+        throw "Could not serve the canvas on $url. Choose a free port with -Port. $($_.Exception.Message)"
+    }
+
+    Write-Host "Review canvas is live at $url"
+    Write-Host "Waiting up to $TimeoutMinutes minute(s) for the reviewer to press the save button."
+    if ($OpenBrowser) { Start-Process $url | Out-Null }
+
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $saved = $null
+    try {
+        while ($true) {
+            $remaining = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalMilliseconds)
+            if ($remaining -le 0) {
+                Write-Warning 'Timed out before the reviewer saved. The config on disk is unchanged.'
+                break
+            }
+
+            $pending = $listener.GetContextAsync()
+            if (-not $pending.Wait($remaining)) {
+                Write-Warning 'Timed out before the reviewer saved. The config on disk is unchanged.'
+                break
+            }
+
+            $context = $pending.Result
+            $request = $context.Request
+            $path = $request.Url.AbsolutePath
+
+            if ($request.HttpMethod -eq 'POST' -and $path -eq '/save') {
+                if ($request.ContentLength64 -gt 4MB) {
+                    Write-PosterCanvasResponse $context.Response 413 'text/plain; charset=utf-8' 'Config payload is too large.'
+                    continue
+                }
+                $reader = [IO.StreamReader]::new($request.InputStream, [Text.Encoding]::UTF8)
+                try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
+
+                # Never write a payload back to disk before it parses and looks like a poster config.
+                try { $parsed = $body | ConvertFrom-Json }
+                catch {
+                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Payload was not valid JSON.'
+                    continue
+                }
+                if (-not $parsed.canvas -or -not $parsed.texts) {
+                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Payload is missing canvas or texts.'
+                    continue
+                }
+
+                Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+                $saved = $body
+                break
+            }
+            elseif ($request.HttpMethod -eq 'POST' -and $path -eq '/cancel') {
+                Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+                Write-Host 'Reviewer closed the canvas without saving.'
+                break
+            }
+            elseif ($path -eq '/favicon.ico') {
+                Write-PosterCanvasResponse $context.Response 404 'text/plain; charset=utf-8' 'no icon'
+            }
+            else {
+                Write-PosterCanvasResponse $context.Response 200 'text/html; charset=utf-8' $Html
+            }
+        }
+    }
+    finally {
+        $listener.Stop()
+        $listener.Close()
+    }
+    return $saved
+}
+
+function Get-PosterCanvasChanges($Before, $After) {
+    $beforeTexts = @($Before.texts)
+    $afterTexts = @($After.texts)
+    $rows = [System.Collections.Generic.List[object]]::new()
+    for ($index = 0; $index -lt $afterTexts.Count; $index++) {
+        $new = $afterTexts[$index]
+        $old = if ($index -lt $beforeTexts.Count) { $beforeTexts[$index] } else { $null }
+        $changes = [System.Collections.Generic.List[string]]::new()
+        foreach ($key in 'id', 'text', 'fontFamily', 'style', 'lineHeight', 'size', 'color', 'x', 'y', 'width', 'height', 'align', 'valign') {
+            $oldValue = if ($old) { [string]$old.$key } else { '(new block)' }
+            $newValue = [string]$new.$key
+            if ($oldValue -eq $newValue) { continue }
+            if ($key -eq 'text') {
+                # Windows PowerShell writes redirected stdout in the system codepage, so echoing
+                # the copy here would reach the agent as mojibake. The saved config is UTF-8.
+                $changes.Add('text edited (read the saved config for the wording)')
+            }
+            else {
+                $changes.Add("$key $oldValue -> $newValue")
+            }
+        }
+        if ($changes.Count -gt 0) {
+            $rows.Add([pscustomobject]@{
+                Block = if ([string]::IsNullOrWhiteSpace([string]$new.id)) { "#$index" } else { [string]$new.id }
+                Changed = ($changes -join '; ')
+            })
+        }
+    }
+    if ($afterTexts.Count -lt $beforeTexts.Count) {
+        $rows.Add([pscustomobject]@{ Block = '(removed)'; Changed = "$($beforeTexts.Count - $afterTexts.Count) block(s) deleted in the canvas" })
+    }
+    return $rows
 }
 
 $configFullPath = (Resolve-Path -LiteralPath $ConfigPath).Path
@@ -48,6 +186,13 @@ elseif (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
     $OutputPath = Join-Path $baseDirectory $OutputPath
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+
+if ([string]::IsNullOrWhiteSpace($SaveConfigPath)) {
+    $SaveConfigPath = $configFullPath
+}
+else {
+    $SaveConfigPath = Resolve-ConfigPath $SaveConfigPath $baseDirectory
+}
 
 $backgroundDataUri = Get-PosterDataUri $backgroundPath
 $conceptDataUri = if ($conceptFullPath) { Get-PosterDataUri $conceptFullPath } else { '' }
@@ -103,6 +248,8 @@ h1{font-size:20px;margin:0 0 8px}.hint{font-size:13px;color:#647087;margin:0 0 1
 <div class="row"><div class="field"><label for="x">X</label><input id="x" type="number"></div><div class="field"><label for="y">Y</label><input id="y" type="number"></div></div>
 <div class="row"><div class="field"><label for="width">寬度</label><input id="width" type="number"></div><div class="field"><label for="height">高度</label><input id="height" type="number"></div></div>
 <div class="row"><div class="field"><label for="align">水平</label><select id="align"><option>near</option><option>center</option><option>far</option></select></div><div class="field"><label for="valign">垂直</label><select id="valign"><option>near</option><option>center</option><option>far</option></select></div></div>
+<div class="actions" id="serveRow" hidden><button id="save">儲存並回傳 agent</button><button id="cancel" class="secondary">不存離開</button></div>
+<p id="serveStatus" class="hint" hidden></p>
 <div class="actions"><button id="copy">複製 JSON</button><button id="download" class="secondary">下載</button><button id="reset" class="secondary">還原</button></div>
 </aside></main>
 <script>
@@ -158,6 +305,20 @@ document.querySelector('#copy').onclick=async ev=>{const s=jsonText(),b=ev.curre
  b.textContent='已複製到剪貼簿';setTimeout(()=>b.textContent='複製 JSON',1200)};
 document.querySelector('#download').onclick=()=>{const blob=new Blob([jsonText()],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='poster-config-reviewed.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
 if(concept)onionRow.hidden=false;
+if(__SERVE__){
+ const status=document.querySelector('#serveStatus'),saveBtn=document.querySelector('#save');
+ const say=(m,ok)=>{status.hidden=false;status.textContent=m;status.style.color=ok?'#1a7f37':'#d62f2f'};
+ document.querySelector('.hint').insertAdjacentHTML('beforeend','<br><b>改完按「儲存並回傳 agent」</b>，設定會寫回檔案並交還 agent 繼續。');
+ document.querySelector('#serveRow').hidden=false;
+ saveBtn.onclick=async()=>{saveBtn.disabled=true;saveBtn.textContent='回傳中…';
+  try{const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:jsonText()});
+   if(!r.ok)throw new Error(await r.text());
+   saveBtn.textContent='已回傳';say('已回傳 agent，可以關閉這個分頁。',true)}
+  catch(err){saveBtn.disabled=false;saveBtn.textContent='儲存並回傳 agent';say('回傳失敗：'+err.message,false)}};
+ document.querySelector('#cancel').onclick=async()=>{
+  try{await fetch('/cancel',{method:'POST'})}catch(err){}
+  saveBtn.disabled=true;say('已結束，未儲存。可以關閉這個分頁。',true)};
+}
 fillSelects();loadBlock();render();
 </script>
 </body></html>
@@ -166,7 +327,13 @@ fillSelects();loadBlock();render();
 $html = $htmlTemplate.Replace('__CONFIG_BASE64__', $configBase64).Replace('__FONTS_BASE64__', $fontsBase64).Replace('__BACKGROUND_DATA_URI__', $backgroundDataUri).Replace('__CONCEPT_DATA_URI__', $conceptDataUri)
 $outputDirectory = Split-Path -Parent $OutputPath
 if ($outputDirectory) { New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null }
-[IO.File]::WriteAllText($OutputPath, $html, [Text.UTF8Encoding]::new($false))
+# The saved file has no server to post to, so only the served copy gets the save button.
+[IO.File]::WriteAllText($OutputPath, $html.Replace('__SERVE__', 'false'), [Text.UTF8Encoding]::new($false))
+
+$savedConfig = $null
+if ($Serve) {
+    $savedConfig = Receive-PosterCanvasEdit $html.Replace('__SERVE__', 'true') $Port $TimeoutMinutes (-not $NoBrowser)
+}
 
 [pscustomobject]@{
     Path = $OutputPath
@@ -175,4 +342,20 @@ if ($outputDirectory) { New-Item -ItemType Directory -Force -Path $outputDirecto
     TextBlocks = @($config.texts).Count
     InstalledFonts = $fontNames.Count
     Bytes = (Get-Item -LiteralPath $OutputPath).Length
+    Saved = if ($savedConfig) { $SaveConfigPath } elseif ($Serve) { '(reviewer did not save)' } else { '(not served)' }
 } | Format-List
+
+if ($savedConfig) {
+    # Write the reviewed payload verbatim: a ConvertTo-Json round trip would reorder keys
+    # and rewrite every number the reviewer just tuned.
+    [IO.File]::WriteAllText($SaveConfigPath, $savedConfig, [Text.UTF8Encoding]::new($false))
+    $changes = @(Get-PosterCanvasChanges $config ($savedConfig | ConvertFrom-Json))
+    if ($changes.Count -eq 0) {
+        Write-Host 'Reviewer saved without changing any text block.'
+    }
+    else {
+        Write-Host "Reviewer changed $($changes.Count) text block(s):"
+        $changes | Format-Table -AutoSize -Wrap
+    }
+    Write-Host 'Re-render and re-verify before treating this layout as final.'
+}

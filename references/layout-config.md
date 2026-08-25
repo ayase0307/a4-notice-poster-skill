@@ -112,17 +112,19 @@ Pass `-ReportPath <path>.json` when automation or CI needs structured results. T
 
 ## Review-canvas workflow
 
-1. Build the HTML canvas. Always pass `-ConceptPath` so the approved concept can be compared against the typesetting:
+1. Serve the canvas. `-Serve` starts a loopback web server, opens the default browser at it, and blocks until the reviewer presses a button, so the edited layout comes straight back to you. Always pass `-ConceptPath` so the approved concept can be compared against the typesetting:
 
    ```powershell
-   ./scripts/build_poster_canvas.ps1 -ConfigPath ./poster-config.json -ConceptPath ./concept.png
+   ./scripts/build_poster_canvas.ps1 -ConfigPath ./poster-config.json -ConceptPath ./concept.png -Serve
    ```
 
-2. Open the reported HTML path in Codex's in-app browser. Click a block to select it; its `id` appears on a badge above the box. Compare installed fonts, style, size, line height, position, alignment, and line breaks.
+   The command returns when the reviewer saves, when they press `不存離開`, or after `-TimeoutMinutes` (default `30`). On save it writes the reviewed config to `-ConfigPath`, or to `-SaveConfigPath` when you want the original left alone, then prints which fields each block changed. Nothing is written on cancel or timeout. Add `-Port` to pin the port, and `-NoBrowser` when no browser should be launched for you. Without `-Serve` the script only writes the HTML file, which still works but makes the reviewer paste the JSON back by hand.
+
+2. Have the reviewer work in the browser tab. Click a block to select it; its `id` appears on a badge above the box. Compare installed fonts, style, size, line height, position, alignment, and line breaks.
 3. Correct placement directly on the canvas instead of guessing coordinates from the image. Drag a block to move it, drag the blue handle on its bottom-right corner to resize it, and nudge the selected block with the arrow keys by `1 px` or with `Shift` plus an arrow key by `10 px`. The `X`, `Y`, `寬度`, and `高度` fields update live.
 4. Use measure mode to read real geometry instead of estimating it. Tick `量測模式`, drag a rectangle over the visible panel interior, wave crest, or cleared text area, and the readout gives its `x`, `y`, `width`, and `height` in final-canvas pixels. `套用到選取方框` writes those four numbers straight into the selected block. This is how panel interiors get measured; do not type coordinates read off the image by eye.
 5. Use the concept overlay to verify placement against the approved design. The slider cross-fades the concept over the current typesetting. Difference mode subtracts the two, so matching pixels turn black and every displaced or resized block glows. Both are measurements of the actual rendered positions; do not replace them with a visual estimate of where a block "looks right".
-6. Record the selected values in the JSON config. `複製 JSON` puts the whole edited config on the clipboard; `下載` writes `poster-config-reviewed.json`. Browser changes are temporary until that JSON is saved back to the config file.
+6. Return the layout. Under `-Serve`, `儲存並回傳 agent` posts the edited config back, writes it to disk, and ends the command; `不存離開` discards the session. Without `-Serve`, `複製 JSON` puts the config on the clipboard and `下載` writes `poster-config-reviewed.json`, and browser changes stay temporary until that JSON is pasted back into the config file. The change list printed on save names only fields and numbers: copy that the reviewer rewrote is reported as `text edited`, because Windows PowerShell writes redirected output in the system codepage. Read the saved config, which is UTF-8, for the wording.
 7. Render a review PNG with the production renderer and show it in Codex. Inspect the full page and 1:1 crops of every text region. Approval 3 must use this exact render because browser and `System.Drawing` font metrics may differ.
 8. After Approval 3, export and verify the final deliverables.
 

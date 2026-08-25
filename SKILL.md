@@ -56,6 +56,8 @@ For typography, read [references/layout-config.md](references/layout-config.md),
 
 Every final text block must explicitly declare its requested `fontFamily`, `style`, `role`, line breaks, line height, final-resolution coordinates, and bounds. Set the approved `viewingDistanceMeters` in the config. The renderer must stop when a family does not resolve, a style is unavailable, required glyphs are missing, Chinese line-break rules fail, text is too small for its viewing distance, or text or its rectangle exceeds declared bounds. Report requested and resolved family names; localized names may differ without being substitutions.
 
+Run the canvas with `-Serve`. It opens a loopback web page in the reviewer's browser and blocks until they press `儲存並回傳 agent`, which writes the reviewed config back to disk and prints the changed fields, so the layout returns to you without anyone copying JSON by hand. `不存離開` and the `-TimeoutMinutes` timeout both write nothing.
+
 The browser canvas is a positioning aid. The production-rendered PNG and its 100% text crops are the evidence for Approval 3.
 
 ## 5. Final output and verification
