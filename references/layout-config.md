@@ -112,16 +112,18 @@ Pass `-ReportPath <path>.json` when automation or CI needs structured results. T
 
 ## Review-canvas workflow
 
-1. Build the HTML canvas:
+1. Build the HTML canvas. Always pass `-ConceptPath` so the approved concept can be compared against the typesetting:
 
    ```powershell
-   ./scripts/build_poster_canvas.ps1 -ConfigPath ./poster-config.json
+   ./scripts/build_poster_canvas.ps1 -ConfigPath ./poster-config.json -ConceptPath ./concept.png
    ```
 
 2. Open the reported HTML path in Codex's in-app browser. Select a text block and compare installed fonts, style, size, line height, position, alignment, and line breaks.
-3. Record the selected values in the JSON config. Browser changes are temporary until the downloaded or reported JSON is saved back to the config.
-4. Render a review PNG with the production renderer and show it in Codex. Inspect the full page and 100% crops of every text region. Approval 3 must use this exact render because browser and `System.Drawing` font metrics may differ.
-5. After Approval 3, export and verify the final deliverables.
+3. Correct placement directly on the canvas instead of guessing coordinates from the image. Drag a text block to move it; the arrow keys nudge the selected block by `1 px` and `Shift` plus an arrow key by `10 px`. The `X` and `Y` fields update live.
+4. Use the concept overlay to verify placement against the approved design. The slider cross-fades the concept over the current typesetting. Difference mode subtracts the two, so matching pixels turn black and every displaced or resized block glows. Both are measurements of the actual rendered positions; do not replace them with a visual estimate of where a block "looks right".
+5. Record the selected values in the JSON config. Browser changes are temporary until the downloaded or reported JSON is saved back to the config.
+6. Render a review PNG with the production renderer and show it in Codex. Inspect the full page and 100% crops of every text region. Approval 3 must use this exact render because browser and `System.Drawing` font metrics may differ.
+7. After Approval 3, export and verify the final deliverables.
 
 ## Measuring generated backgrounds
 
