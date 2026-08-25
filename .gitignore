@@ -6,6 +6,7 @@ poster-config-reviewed.json
 # Local working directories
 work/
 outputs/
+examples/smoke/output/
 
 # OS files
 Thumbs.db

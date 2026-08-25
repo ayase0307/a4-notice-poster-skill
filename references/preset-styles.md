@@ -1,72 +1,79 @@
-# Preset poster styles
+# Preset poster design styles
 
-Use these installed presets when the user wants options or has not fixed a visual direction. Show only the 2-3 presets that fit the notice. Present the name, a one-sentence visual description, and why it suits the content. The user may combine named traits or request a custom direction.
+Use these presets only when the user wants options or has not fixed a visual direction. Show the two or three styles that best fit the message, audience, image needs, and information density. These are design languages rather than industry templates.
 
-Verified visual examples using the same `社區免費健康檢查日` theme are stored in `assets/style-previews/` and displayed in the repository README. Use them as preset references, not as fixed layouts or mandatory content.
+Verified examples use the same fictional `城市週末書市` event and are stored in `assets/style-previews/`. The common content makes composition, typography, palette, and image treatment easy to compare.
 
-## `clinical-trust`｜醫療信賴
+## `swiss-grid`｜瑞士網格
 
-- Best for: clinics, screening, health education, service changes, electronic medical records.
-- Palette: deep navy, teal, clean white, small coral accent.
-- Composition: strong upper-left title, one clear healthcare visual, structured information cards, dark service footer.
-- Typography feel: heavy sans-serif title, highly legible sans-serif body, prominent date or action.
-- Image direction: clean clinical vector or polished 3D illustration, soft light, restrained technology motifs.
-- Avoid: sterile empty pages, excessive cyan gradients, tiny legal copy, generic medical icons everywhere.
-- Prompt seed: `trustworthy contemporary healthcare notice, navy and teal system, clean white information cards, one polished medical focal illustration, generous text-safe zones, high-distance legibility`.
+- Character: disciplined, modern, clear, typographic.
+- Composition: asymmetric modular grid, strong alignment, large scale contrast, generous margins, thin rules.
+- Palette: warm white, black or charcoal, one vivid accent.
+- Type direction: neutral grotesk or neo-grotesk title and body; numbers may become graphic anchors.
+- Image direction: one sharply cropped photograph or restrained geometric field.
+- Works well when: hierarchy and fast reading matter more than illustration.
+- Avoid: floating cards, soft shadows, centered-everything layouts, decorative gradients.
+- Prompt seed: `finished portrait poster in a refined Swiss International Typographic Style, asymmetric modular grid, bold scale contrast, strict alignment, warm white charcoal and one vivid accent, one intentional image crop, integrated typography and graphic rules`.
 
-## `public-institutional`｜公部門正式
+## `bold-geometric`｜大膽幾何
 
-- Best for: regulations, policy notices, administrative announcements, official service information.
-- Palette: navy, warm white, muted gold or red seal accent.
-- Composition: centered or disciplined grid, clear organization line, formal title block, orderly content sections.
-- Typography feel: authoritative title with restrained body typography; generous margins and consistent rules.
-- Image direction: subtle architecture, civic geometry, paper texture, emblem-like abstract forms without fake seals.
-- Avoid: playful mascots, decorative scripts, fake official marks, dense ornamental borders.
-- Prompt seed: `formal civic public notice, disciplined Swiss-inspired grid, navy and warm white, restrained gold accent, subtle institutional geometry, dignified and highly readable`.
+- Character: energetic, contemporary, high-impact.
+- Composition: oversized title, cropped circles or angular forms, diagonal movement, compact information block.
+- Palette: two or three saturated colors balanced by black, navy, or cream.
+- Type direction: heavy display sans with a simpler body family.
+- Image direction: abstract shapes may carry the poster; one cutout subject is optional.
+- Works well when: the poster must attract attention from a distance.
+- Avoid: generic corporate gradients, excessive icons, equal emphasis on every element.
+- Prompt seed: `finished high-impact portrait poster, oversized display typography integrated with bold cropped geometric forms, dynamic diagonals, saturated limited palette with dark anchor color, compact readable event details, deliberate print-design composition`.
 
-## `warm-community`｜溫暖社區
+## `editorial-collage`｜編輯拼貼
 
-- Best for: neighborhood events, family services, community health, friendly reminders.
-- Palette: cream, leaf green, apricot, muted sky blue.
-- Composition: rounded cards, open spacing, friendly title, small supportive illustrations around the edges.
-- Typography feel: rounded or humanist sans-serif, approachable but still print-legible.
-- Image direction: inclusive community scenes, soft paper texture, natural light, gentle plants or neighborhood motifs.
-- Avoid: childish sticker clutter, low-contrast pastel text, overly cute treatment for serious notices.
-- Prompt seed: `warm inclusive community notice, cream and leaf green palette with apricot accents, rounded information cards, friendly human-centered illustration, calm paper texture, clear text zones`.
+- Character: cultural, expressive, tactile, curated.
+- Composition: layered cutouts, torn-paper edges, texture, captions, controlled overlap, one clear reading path.
+- Palette: paper neutrals with ink black and one or two print-like spot colors.
+- Type direction: serif and sans pairing or an expressive display face with restrained details.
+- Image direction: photographic or illustrated cutouts with real material texture.
+- Works well when: the subject benefits from personality, story, or independent-publication energy.
+- Avoid: random scrapbook clutter, illegible overlaps, fake handwriting for formal details.
+- Prompt seed: `finished editorial collage portrait poster, art-directed paper cutouts, tactile print texture, controlled overlap, sophisticated serif and sans typography, clear hierarchy, neutral paper tones with two spot colors, polished cultural-event design`.
 
-## `high-alert`｜高辨識警示
+## `soft-illustrative`｜柔和插畫
 
-- Best for: closures, hazards, deadlines, prohibited actions, urgent operational changes.
-- Palette: red, amber, black or deep navy, white.
-- Composition: oversized directive, one unmistakable symbol, minimal supporting copy, high-contrast action block.
-- Typography feel: condensed or heavy sans-serif; short lines and strong numeric emphasis.
-- Image direction: bold geometric warning system, restrained diagonal or boundary motifs, no decorative illustration unless necessary.
-- Avoid: alarmist visual noise, multiple competing icons, large paragraphs, relying on color alone to convey danger.
-- Prompt seed: `high-visibility public warning poster, oversized directive typography, red amber deep navy and white, bold geometric hierarchy, one unmistakable warning symbol, minimal clutter`.
+- Character: friendly, human, approachable, calm.
+- Composition: one central or edge-framed illustration, generous text field, rounded supporting shapes, open spacing.
+- Palette: cream plus muted natural colors and one brighter accent.
+- Type direction: humanist or rounded sans; title remains strong enough for print.
+- Image direction: editorial illustration with intentional shape language and restrained detail.
+- Works well when: warmth and accessibility matter.
+- Avoid: childish sticker clutter, low-contrast pastel text, tiny copy inside many cards.
+- Prompt seed: `finished warm editorial-illustration portrait poster, confident friendly composition, one coherent human-centered scene, cream and muted natural palette with a bright accent, integrated title and event typography, open spacing and print legibility`.
 
-## `editorial-minimal`｜編輯極簡
+## `retro-modern`｜復古現代
 
-- Best for: cultural notices, professional services, internal announcements, information-led posters.
-- Palette: warm white, charcoal, one restrained accent color.
-- Composition: typography-led asymmetric grid, large margins, thin rules, deliberate whitespace.
-- Typography feel: refined sans-serif or serif-sans pairing, strong scale contrast, precise alignment.
-- Image direction: optional single crop, abstract texture, or no illustration; typography carries the identity.
-- Avoid: generic floating cards, excessive shadows, decorative gradients, shrinking text to preserve whitespace.
-- Prompt seed: `premium editorial public notice, warm white and charcoal with one restrained accent, asymmetric typographic grid, generous margins, precise rules, sophisticated minimal composition`.
+- Character: nostalgic, playful, designed rather than vintage-filtered.
+- Composition: mid-century shapes, offset-print rhythm, bold border or frame, concise information zones.
+- Palette: mustard, rust, forest, cobalt, cream, or another limited period-informed combination.
+- Type direction: expressive display title paired with a clean contemporary body.
+- Image direction: flat illustration, screen-print forms, or stylized product and object motifs.
+- Works well when: the event can support a distinctive, memorable personality.
+- Avoid: distressed texture over all text, parody signage, too many retro clichés.
+- Prompt seed: `finished retro-modern portrait poster, mid-century graphic forms and screen-print rhythm, limited mustard rust forest and cream palette, expressive display typography paired with clean event details, tactile but polished contemporary finish`.
 
-## `human-centered-illustration`｜人物情境插畫
+## `photographic-poster`｜攝影主導
 
-- Best for: workplace safety, anti-harassment, welfare, public behavior, service guidance.
-- Palette: plum or navy base, coral and cream accents, natural skin and clothing colors.
-- Composition: narrative scene as the upper or central anchor, protected headline field, structured information zone below.
-- Typography feel: expressive heavy title with highly legible body; title and body may use different local fonts.
-- Image direction: respectful editorial illustration showing the desired or prohibited interaction clearly, diverse adults, calm body language.
-- Avoid: sensationalizing harm, ambiguous gestures, stereotypes, placing formal text over faces or detailed clothing.
-- Prompt seed: `respectful human-centered editorial illustration for a public notice, clear interpersonal situation, plum coral and cream palette, protected headline area, structured information panels, dignified and accessible`.
+- Character: immediate, premium, atmospheric.
+- Composition: one full-bleed or decisively cropped photograph, protected title area, minimal supporting structure.
+- Palette: derived from the photograph with one controlled text or rule color.
+- Type direction: confident display family with highly legible secondary sans or serif.
+- Image direction: editorial photography with natural detail, purposeful negative space, and a clear subject.
+- Works well when: a real place, object, performance, person, or atmosphere should lead.
+- Avoid: generic stock-photo staging, text over busy faces, weak contrast, multiple unrelated photos.
+- Prompt seed: `finished premium photographic portrait poster, one art-directed editorial photograph with purposeful negative space, decisive crop, integrated display typography, minimal supporting information system, natural texture and sophisticated print finish`.
 
 ## Selection rules
 
-- Reference image plus preset: state which reference traits remain and which preset supplies the replacement system.
-- Two-preset mix: name one primary preset and at most two borrowed traits from the secondary preset.
-- Serious legal or safety copy: preserve readability and dignity even when the user selects a friendly style.
-- Concept generation: include the intended typography in the integrated concept, then reconstruct the approved result with a text-free background and deterministic local-font text.
+- Select by desired visual character, content density, and available imagery. Do not route a topic to a style merely because of its industry.
+- When combining presets, use one primary system and borrow at most two named traits from a secondary system.
+- When using a reference plus a preset, state which reference traits remain and which preset supplies the replacement system.
+- Keep serious, legal, or safety copy readable and dignified even when the user selects an expressive style.
+- Generate a finished concept with intended typography first. After approval, preserve that concept while removing generated text and rebuilding exact local-font type.

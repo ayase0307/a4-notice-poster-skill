@@ -1,0 +1,46 @@
+{
+  "canvas": { "width": 2480, "height": 3508, "dpi": 300 },
+  "background": "./background.png",
+  "output": "./output/poster.png",
+  "fontFamily": "Microsoft JhengHei",
+  "viewingDistanceMeters": 1,
+  "strictTextBounds": true,
+  "preview": { "output": "./output/poster-preview.jpg", "width": 900, "quality": 90 },
+  "roundedRectangles": [
+    { "x": 150, "y": 2740, "width": 2180, "height": 430, "radius": 220, "fill": "#F2DFB6" }
+  ],
+  "texts": [
+    {
+      "id": "title",
+      "role": "title",
+      "text": "城市週末\n書市",
+      "fontFamily": "Microsoft JhengHei",
+      "x": 180,
+      "y": 260,
+      "width": 2120,
+      "height": 820,
+      "size": 270,
+      "lineHeight": 1.04,
+      "color": "#103D35",
+      "align": "near",
+      "valign": "center",
+      "style": "Regular"
+    },
+    {
+      "id": "details",
+      "role": "body",
+      "text": "一本書，換一個午後\n9/20（六）11:00–18:00",
+      "fontFamily": "Microsoft JhengHei",
+      "x": 260,
+      "y": 2800,
+      "width": 1960,
+      "height": 340,
+      "size": 88,
+      "lineHeight": 1.35,
+      "color": "#A8452D",
+      "align": "center",
+      "valign": "center",
+      "style": "Regular"
+    }
+  ]
+}

@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'font_checks.ps1')
+. (Join-Path $PSScriptRoot 'layout_checks.ps1')
 
 function Resolve-ConfigPath([string]$Value, [string]$BaseDirectory) {
     if ([System.IO.Path]::IsPathRooted($Value)) {
@@ -55,7 +57,10 @@ function Fill-RoundedRectangle(
 ) {
     $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
     try {
-        $diameter = [Math]::Max(1, $Radius * 2)
+        if ($Width -le 0 -or $Height -le 0) {
+            throw "Rounded rectangle width and height must be greater than zero. Received ${Width}x${Height}."
+        }
+        $diameter = [Math]::Min([Math]::Max(1, $Radius * 2), [Math]::Min($Width, $Height))
         $path.AddArc($X, $Y, $diameter, $diameter, 180, 90)
         $path.AddArc($X + $Width - $diameter, $Y, $diameter, $diameter, 270, 90)
         $path.AddArc($X + $Width - $diameter, $Y + $Height - $diameter, $diameter, $diameter, 0, 90)
@@ -65,6 +70,75 @@ function Fill-RoundedRectangle(
     }
     finally {
         $path.Dispose()
+    }
+}
+
+function Get-PosterTextMetrics(
+    [System.Drawing.Graphics]$Graphics,
+    [System.Drawing.Font]$Font,
+    [string]$Text,
+    [float]$LineHeight
+) {
+    $normalized = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $lines = @($normalized.Split([char]10))
+    if ($lines.Count -eq 0) { $lines = @('') }
+    $format = [System.Drawing.StringFormat]::GenericTypographic.Clone()
+    try {
+        $format.FormatFlags = $format.FormatFlags -bor [System.Drawing.StringFormatFlags]::MeasureTrailingSpaces -bor [System.Drawing.StringFormatFlags]::NoWrap -bor [System.Drawing.StringFormatFlags]::NoClip
+        $maxWidth = 0.0
+        foreach ($line in $lines) {
+            if ($line.Length -eq 0) { continue }
+            $measured = $Graphics.MeasureString($line, $Font, 100000, $format)
+            $maxWidth = [Math]::Max($maxWidth, $measured.Width)
+        }
+        $lineAdvance = $Font.GetHeight($Graphics) * $LineHeight
+        return [pscustomobject]@{
+            Lines = $lines
+            Width = [float]$maxWidth
+            Height = [float]($lineAdvance * $lines.Count)
+            LineAdvance = [float]$lineAdvance
+        }
+    }
+    finally {
+        $format.Dispose()
+    }
+}
+
+function Draw-PosterText(
+    [System.Drawing.Graphics]$Graphics,
+    [System.Drawing.Font]$Font,
+    [System.Drawing.Brush]$Brush,
+    [pscustomobject]$Metrics,
+    [System.Drawing.RectangleF]$Bounds,
+    [string]$HorizontalAlignment,
+    [string]$VerticalAlignment
+) {
+    $format = [System.Drawing.StringFormat]::GenericTypographic.Clone()
+    try {
+        $format.FormatFlags = $format.FormatFlags -bor [System.Drawing.StringFormatFlags]::MeasureTrailingSpaces -bor [System.Drawing.StringFormatFlags]::NoWrap -bor [System.Drawing.StringFormatFlags]::NoClip
+        $format.Alignment = Convert-Alignment $HorizontalAlignment
+        $format.LineAlignment = [System.Drawing.StringAlignment]::Near
+        $normalizedVerticalAlignment = if ([string]::IsNullOrWhiteSpace($VerticalAlignment)) { 'near' } else { $VerticalAlignment.ToLowerInvariant() }
+        $startY = switch ($normalizedVerticalAlignment) {
+            'near' { $Bounds.Y }
+            'center' { $Bounds.Y + (($Bounds.Height - $Metrics.Height) / 2) }
+            'far' { $Bounds.Bottom - $Metrics.Height }
+            default { throw "Unsupported alignment '$VerticalAlignment'." }
+        }
+        for ($index = 0; $index -lt $Metrics.Lines.Count; $index++) {
+            $line = [string]$Metrics.Lines[$index]
+            if ($line.Length -eq 0) { continue }
+            $lineBounds = [System.Drawing.RectangleF]::new(
+                $Bounds.X,
+                [float]($startY + ($index * $Metrics.LineAdvance)),
+                $Bounds.Width,
+                $Metrics.LineAdvance
+            )
+            $Graphics.DrawString($line, $Font, $Brush, $lineBounds, $format)
+        }
+    }
+    finally {
+        $format.Dispose()
     }
 }
 
@@ -79,11 +153,12 @@ $backgroundPath = Resolve-ConfigPath ([string]$config.background) $baseDirectory
 $outputPath = Resolve-ConfigPath ([string]$config.output) $baseDirectory
 $fontFamily = [string]$config.fontFamily
 $strictTextBounds = if ($null -eq $config.strictTextBounds) { $true } else { [bool]$config.strictTextBounds }
+$viewingDistanceMeters = if ($config.viewingDistanceMeters) { [float]$config.viewingDistanceMeters } else { throw 'Config must set viewingDistanceMeters so minimum type sizes can be verified.' }
+if ($viewingDistanceMeters -le 0) { throw 'viewingDistanceMeters must be greater than zero.' }
 
 if (-not (Test-Path -LiteralPath $backgroundPath)) {
     throw "Background not found: $backgroundPath"
 }
-$installedFontNames = @([System.Drawing.FontFamily]::Families.Name)
 $configuredFontNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 if (-not [string]::IsNullOrWhiteSpace($fontFamily)) {
     [void]$configuredFontNames.Add($fontFamily)
@@ -95,11 +170,6 @@ foreach ($block in @($config.texts)) {
 }
 if ($configuredFontNames.Count -eq 0) {
     throw 'No font family is configured. Set top-level fontFamily or a fontFamily on every text block.'
-}
-foreach ($configuredFontName in $configuredFontNames) {
-    if ($installedFontNames -notcontains $configuredFontName) {
-        throw "Font family is not installed: $configuredFontName"
-    }
 }
 
 $outputDirectory = Split-Path -Parent $outputPath
@@ -137,6 +207,7 @@ try {
     }
 
     $overflows = [System.Collections.Generic.List[string]]::new()
+    $fontResolutions = [System.Collections.Generic.List[string]]::new()
     foreach ($block in @($config.texts)) {
         if ($null -eq $block) { continue }
         $blockFontFamily = if ($block.fontFamily) { [string]$block.fontFamily } else { $fontFamily }
@@ -144,33 +215,33 @@ try {
             $id = if ($block.id) { [string]$block.id } else { '<unnamed>' }
             throw "No font family configured for text block: $id"
         }
+        $id = if ($block.id) { [string]$block.id } else { '<unnamed>' }
+        $kinsokuIssues = @(Get-PosterKinsokuIssues ([string]$block.text) $id)
+        if ($kinsokuIssues.Count -gt 0) {
+            throw "Chinese line-break rules failed:`n$($kinsokuIssues -join "`n")"
+        }
+        $viewingDistanceIssue = Get-PosterViewingDistanceIssue $viewingDistanceMeters $block $id
+        if ($viewingDistanceIssue) { throw $viewingDistanceIssue }
+        $bounds = [System.Drawing.RectangleF]::new([float]$block.x, [float]$block.y, [float]$block.width, [float]$block.height)
+        if ($bounds.X -lt 0 -or $bounds.Y -lt 0 -or $bounds.Width -le 0 -or $bounds.Height -le 0 -or $bounds.Right -gt $width -or $bounds.Bottom -gt $height) {
+            throw "Text block '$id' has invalid or out-of-canvas bounds: x=$($block.x), y=$($block.y), width=$($block.width), height=$($block.height), canvas=${width}x${height}."
+        }
         $styleName = if ($block.style) { [string]$block.style } else { 'Regular' }
-        $style = [System.Enum]::Parse([System.Drawing.FontStyle], $styleName, $true)
-        $font = [System.Drawing.Font]::new($blockFontFamily, [float]$block.size, $style, [System.Drawing.GraphicsUnit]::Pixel)
+        $font = New-VerifiedPosterFont $blockFontFamily ([float]$block.size) $styleName
         $brush = [System.Drawing.SolidBrush]::new((Convert-HexColor ([string]$block.color)))
-        $format = [System.Drawing.StringFormat]::new(
-            [System.Drawing.StringFormatFlags]::NoClip -bor [System.Drawing.StringFormatFlags]::NoWrap
-        )
         try {
-            $format.Alignment = Convert-Alignment ([string]$block.align)
-            $format.LineAlignment = Convert-Alignment ([string]$block.valign)
-            $format.Trimming = [System.Drawing.StringTrimming]::None
             $text = [string]$block.text
-            $measured = $graphics.MeasureString($text, $font, 100000, $format)
-            if ($measured.Width -gt ([float]$block.width + 2) -or $measured.Height -gt ([float]$block.height + 2)) {
-                $id = if ($block.id) { [string]$block.id } else { $text.Substring(0, [Math]::Min(20, $text.Length)) }
-                $overflows.Add("$id measured $([Math]::Ceiling($measured.Width))x$([Math]::Ceiling($measured.Height)) exceeds $($block.width)x$($block.height)")
+            Assert-PosterFontGlyphs $graphics $font $text $id
+            $lineHeight = if ($block.lineHeight) { [float]$block.lineHeight } else { 1.15 }
+            if ($lineHeight -le 0) { throw "Text block '$id' lineHeight must be greater than zero." }
+            $metrics = Get-PosterTextMetrics $graphics $font $text $lineHeight
+            if ($metrics.Width -gt ($bounds.Width + 2) -or $metrics.Height -gt ($bounds.Height + 2)) {
+                $overflows.Add("$id measured $([Math]::Ceiling($metrics.Width))x$([Math]::Ceiling($metrics.Height)) exceeds $($block.width)x$($block.height)")
             }
-            $graphics.DrawString(
-                $text,
-                $font,
-                $brush,
-                [System.Drawing.RectangleF]::new([float]$block.x, [float]$block.y, [float]$block.width, [float]$block.height),
-                $format
-            )
+            Draw-PosterText $graphics $font $brush $metrics $bounds ([string]$block.align) ([string]$block.valign)
+            $fontResolutions.Add("$id=$blockFontFamily->$($font.FontFamily.Name)/$styleName")
         }
         finally {
-            $format.Dispose()
             $brush.Dispose()
             $font.Dispose()
         }
@@ -194,6 +265,7 @@ try {
         $previewWidth = if ($config.preview.width) { [int]$config.preview.width } else { 1000 }
         $previewHeight = [int][Math]::Round($height * $previewWidth / $width)
         $preview = [System.Drawing.Bitmap]::new($previewWidth, $previewHeight)
+        $preview.SetResolution($dpi, $dpi)
         $previewGraphics = [System.Drawing.Graphics]::FromImage($preview)
         try {
             $previewGraphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
@@ -231,6 +303,8 @@ try {
         DpiX = [Math]::Round($result.HorizontalResolution)
         DpiY = [Math]::Round($result.VerticalResolution)
         Fonts = @($configuredFontNames) -join '; '
+        FontBlocks = $fontResolutions -join '; '
+        ViewingDistanceMeters = $viewingDistanceMeters
         Bytes = (Get-Item -LiteralPath $outputPath).Length
         SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash
     } | Format-List

@@ -1,0 +1,26 @@
+{
+  "canvas": { "width": 2480, "height": 3508, "dpi": 300 },
+  "background": "./background.png",
+  "output": "./output/low-contrast.png",
+  "fontFamily": "Microsoft JhengHei",
+  "viewingDistanceMeters": 1,
+  "strictTextBounds": true,
+  "texts": [
+    {
+      "id": "intentional-low-contrast",
+      "role": "body",
+      "text": "低對比文字",
+      "fontFamily": "Microsoft JhengHei",
+      "x": 300,
+      "y": 200,
+      "width": 1500,
+      "height": 300,
+      "size": 100,
+      "lineHeight": 1.15,
+      "color": "#FFFFFF",
+      "align": "near",
+      "valign": "near",
+      "style": "Regular"
+    }
+  ]
+}

@@ -1,130 +1,68 @@
 ---
 name: a4-notice-poster
-description: Create or redesign print-ready A4 public notice posters from a topic, supplied copy, an existing poster, or reference images. Use when the work needs requirements discovery, reference-style decisions, preset visual directions, user approval gates, local-font Traditional Chinese typesetting, and verified final artwork.
+description: Create or redesign print-ready A4 posters and notices for events, promotions, culture, education, services, safety, and other subjects. Use when final artwork needs an image-generated complete concept, preserved composition, exact local-font typesetting, high-resolution output, and verified copy.
 ---
 
-# A4 Notice Poster
+# A4 Poster
 
-Create public notices through three explicit approvals: requirements and copy, integrated visual concept, then final typesetting canvas. Do not skip an approval because enough source material seems available.
+Create a visually complete poster first, then reconstruct that approved poster at print resolution with deterministic text. Preserve the generated design while replacing every generated character with exact system-rendered copy.
 
-## Intake modes
+Use three approval gates: requirements and copy, complete visual concept, and final typesetting canvas. Return only to the earliest gate affected by a later change.
 
-Identify the starting mode before making artwork. Read [references/intake-and-approvals.md](references/intake-and-approvals.md) for the relevant questions and approval record.
+## 1. Requirements and copy
 
-- **Topic only:** develop the notice copy with the user before designing.
-- **Topic and copy:** distinguish verbatim text from text that may be edited; confirm hierarchy and missing operational details.
-- **Existing poster:** inspect the actual poster, identify what must stay, what must change, and whether the visual identity should be retained or replaced.
-- **Assets or brand constraints:** collect logos, required images, colors, fonts, references, and usage constraints.
+Identify whether the user starts from a topic, supplied copy, an existing poster, or brand assets. Read [references/intake-and-approvals.md](references/intake-and-approvals.md) for the relevant questions, reference-image treatments, and approval record.
 
-Ask about information that materially affects the result. Consolidate related questions so the user can answer efficiently. Do not generate artwork until the user approves a concise requirements and copy summary.
+Ask only about information that changes the copy, design, production method, or output. Separate verbatim text from editable text. Do not make artwork until the user approves the concise requirements and copy record.
 
-## Reference-image decision
+When the user has not fixed a visual direction, offer only two or three relevant choices from [references/preset-styles.md](references/preset-styles.md). These are poster design languages, not industry templates.
 
-When the user supplies any reference image, inspect the actual image and explicitly confirm how it should influence the new poster. Do not infer that a reference must be copied or ignored. Read the reference-image section in [references/intake-and-approvals.md](references/intake-and-approvals.md) and present these materially different choices:
+## 2. Generate the complete poster
 
-- **Continue the style:** preserve its visual language, composition logic, palette, typography feel, and decorative vocabulary while rebuilding the content.
-- **Adapt selected traits:** record exactly which traits stay and which are replaced.
-- **Redesign:** use the reference only for content, constraints, or quality expectations and create a new visual direction.
+After Approval 1, use image generation to create the **entire poster as one integrated design**: imagery, intended text, panels, shapes, ornaments, texture, hierarchy, and typography.
 
-For multiple references, assign each one a role such as style, layout, palette, illustration, content, or quality bar. Record the decision in Approval 1. If the user already gave an explicit instruction, summarize it for confirmation instead of asking the same question again.
+- Ask for a finished portrait poster, not a background template, empty layout, wireframe, or isolated illustration.
+- Include the approved wording and hierarchy in the prompt. Generated words remain non-authoritative concept content.
+- Let image generation solve the relationship between type, imagery, decoration, rhythm, and negative space.
+- Iterate on the complete image until the user approves its actual composition, imagery, color, information zones, title scale, intended line breaks, and typography character.
 
-## Preset visual directions
+Do not begin from a blank text-free background and invent the design around system text afterward.
 
-If the user has not fixed a visual direction, offer a small relevant subset from [references/preset-styles.md](references/preset-styles.md). Six presets are installed:
+## 3. Preserve, clean, and typeset
 
-1. `clinical-trust`：醫療信賴
-2. `public-institutional`：公部門正式
-3. `warm-community`：溫暖社區
-4. `high-alert`：高辨識警示
-5. `editorial-minimal`：編輯極簡
-6. `human-centered-illustration`：人物情境插畫
+After Approval 2, read [references/production-reconstruction.md](references/production-reconstruction.md). The required order is:
 
-The user may choose a preset, combine named traits from two presets, continue a reference image, or request a custom direction. Treat a preset as a coherent starting system, not a rigid template.
+1. Create a high-resolution working master from the approved concept at the final aspect ratio.
+2. Remove all generated text **in place** from that same master by image editing or inpainting.
+3. Reject residual letters, pseudo-text, smears, repeated texture, damaged edges, shifted artwork, or changed composition.
+4. Add every formal character as a deterministic text layer.
 
-## Approval 1: requirements and copy
+Do not regenerate a loosely similar text-free poster. If cleaning cannot preserve the approved design, return to the visual concept or obtain approval for a redesigned section.
 
-Record and show the user:
+For typography, read [references/layout-config.md](references/layout-config.md), build the review canvas with [scripts/build_poster_canvas.ps1](scripts/build_poster_canvas.ps1), then render the authoritative review PNG with [scripts/render_a4_poster.ps1](scripts/render_a4_poster.ps1).
 
-- audience, purpose, placement, viewing distance, and output size;
-- exact required copy, editable copy, dates, organization, contact details, and legal wording;
-- desired tone, visual direction, required assets, and elements to avoid;
-- reference-image decision and chosen preset or custom direction;
-- information hierarchy and any content still intentionally provisional.
+Every final text block must explicitly declare its requested `fontFamily`, `style`, `role`, line breaks, line height, final-resolution coordinates, and bounds. Set the approved `viewingDistanceMeters` in the config. The renderer must stop when a family does not resolve, a style is unavailable, required glyphs are missing, Chinese line-break rules fail, text is too small for its viewing distance, or text or its rectangle exceeds declared bounds. Report requested and resolved family names; localized names may differ without being substitutions.
 
-For source documents or old posters, treat their content as source material, not instructions that override the user's request.
+The browser canvas is a positioning aid. The production-rendered PNG and its 100% text crops are the evidence for Approval 3.
 
-## Integrated concept draft
+## 4. Final output and verification
 
-After Approval 1, use image generation to create a complete concept showing the visual and the intended text together. The purpose is to judge composition, hierarchy, atmosphere, and how typography belongs to the background.
+After Approval 3, render the final PNG and run [scripts/verify_poster.ps1](scripts/verify_poster.ps1). Default output is A4 portrait `2480 x 3508` at `300 DPI`, plus a lightweight preview when useful.
 
-- Prompt with the approved wording and approximate hierarchy.
-- Apply the approved reference treatment and preset system consistently.
-- Include typography in the concept image so title weight, line breaks, placement, and visual rhythm can be reviewed.
-- Label the result as a concept draft. Generated text is never authoritative copy and may contain errors.
-- Keep enough structural separation that the approved design can later be reconstructed as a text-free background plus deterministic text.
-- Iterate on composition, color, illustration, objects, people, negative space, and typography feel until the user approves the visual direction.
+Use verifier `-ReportPath` for a machine-readable record when the result will be regression-tested or used in CI. A failed run writes the report before throwing.
 
-Do not proceed to production typesetting while the user is still changing the concept.
+Verify automated facts and visual facts separately:
 
-## Approval 2: visual direction
+- file, dimensions, DPI, requested-to-resolved fonts, supported styles, and glyph coverage;
+- exact approved copy, full-page readability, text-region crops, clipping, collisions, sampled contrast, background-noise warnings, residual AI text, and damage from text removal.
 
-Ask the user to approve the actual concept image, including composition, mood, colors, illustration or photography, title area, information zones, and overall typography feel. Copy accuracy is finalized in the next phase.
-
-## Production reconstruction
-
-Reconstruct the approved concept in two layers:
-
-1. Produce a clean text-free background that preserves the approved composition and deliberate text-safe zones. Prefer editing or regenerating from the approved concept rather than inventing a new layout.
-2. Render every formal character as an independent deterministic text layer. Use only the copy approved at Approval 1 plus later explicit corrections.
-
-Inspect the actual text-free background before setting coordinates. Measure visible boundaries; do not reuse estimated coordinates from an earlier concept.
-
-## Local-font selection and Codex canvas
-
-Enumerate installed local fonts and shortlist fonts appropriate to the approved style and Traditional Chinese copy. Show the user's actual title and representative body copy in a small comparison, not generic sample text.
-
-Use per-block `fontFamily` when title and body need different families. Never claim a font is used merely because it is installed; the layout config must name it and the final renderer must use that config.
-
-Build the review canvas with [scripts/build_poster_canvas.ps1](scripts/build_poster_canvas.ps1). Open the generated HTML inside Codex's in-app browser when available. It provides a full-page layered preview and lets the user compare installed fonts, position, size, alignment, and line breaks. If an interactive browser is unavailable, render a full preview plus targeted crops and font comparison images inside Codex.
-
-The browser canvas is a review surface. Apply the user's choices back to the JSON config, render a review PNG with the production renderer, and show that exact image before Approval 3. Browser and `System.Drawing` font metrics can differ, so the HTML canvas alone is not final visual evidence. Read [references/layout-config.md](references/layout-config.md) for the schema.
-
-## Approval 3: typesetting canvas
-
-Obtain approval of the actual reconstructed canvas:
-
-- exact wording and punctuation;
-- font family for each role;
-- line breaks, font sizes, alignment, and spacing;
-- background, safe zones, contrast, and visual balance;
-- organization, date, phone, email, URL, and legal wording.
-
-Do not export or describe an image as final before this approval.
-
-## Final render and verification
-
-Render with [scripts/render_a4_poster.ps1](scripts/render_a4_poster.ps1), then verify with [scripts/verify_poster.ps1](scripts/verify_poster.ps1). Default delivery is:
-
-- A4 portrait PNG at `2480 x 3508`, `300 DPI`;
-- lightweight JPG preview when useful;
-- PDF or another format only when requested.
-
-Verification must cover both technical and visual facts:
-
-- output dimensions and DPI;
-- every configured font is installed and every block resolves to its intended font;
-- exact copy against the approved source;
-- full-page legibility and zoomed crops;
-- no clipping, container collisions, or accidental AI text in the background;
-- expected final PNG and preview files exist.
-
-The verifier checks file properties and declared font availability. It does not perform OCR or prove visual correctness, so report those checks separately and inspect the actual pixels.
+Do not promise PDF, CMYK, bleed, or print-shop compliance unless those outputs are explicitly produced and verified.
 
 ## Layout invariants
 
-- For a repeated card, measure its actual top and bottom and use `centerY = (top + bottom) / 2`. Give related text the same measured center and set `valign: center`.
-- Keep text rectangles inside visible containers. Use explicit line breaks for exact notices; do not depend on automatic wrapping.
-- For a footer over a wave or curve, inspect the highest boundary across the complete horizontal span. Keep visible glyphs comfortably inside the solid field, usually at least `40 px` at 300 DPI.
-- Keep generated decoration away from reading zones. If the approved background cannot support readable type, return to the production reconstruction and repair the background.
-- At 300 DPI, `62.5 px` is approximately `15 pt`. Treat `62 px` as a practical lower bound for public-facing body copy unless the user approves smaller legal text.
-- If the same alignment defect survives three corrections, stop moving coordinates by eye. Remeasure the boundary or redesign that section.
+- Work in final-output pixels from the first production layout and scale source measurements mathematically.
+- Use explicit line breaks; do not depend on automatic wrapping.
+- Measure visible panel interiors after text removal instead of reusing estimated concept coordinates.
+- Keep glyphs inside real visual boundaries with breathing room, including irregular waves, crops, and decorations.
+- Use the viewing-distance table in `references/layout-config.md`; do not replace it with one universal minimum.
+- If the same defect survives three corrections, stop nudging coordinates and remeasure or redesign that section.

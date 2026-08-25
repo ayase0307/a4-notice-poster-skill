@@ -76,6 +76,8 @@ Intentionally unresolved items:
 
 Ask for confirmation of this record. Later changes update the record rather than replacing it silently.
 
+Copy the approved viewing distance into the production config as `viewingDistanceMeters`. Classify every final text block with a `role` so the renderer can apply the title or body minimum from `references/layout-config.md`.
+
 ## Three approval gates
 
 1. **Requirements and copy:** approves the brief and formal content used to make the concept.

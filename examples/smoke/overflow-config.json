@@ -1,0 +1,26 @@
+{
+  "canvas": { "width": 2480, "height": 3508, "dpi": 300 },
+  "background": "./background.png",
+  "output": "./output/overflow-should-not-render.png",
+  "fontFamily": "Microsoft JhengHei",
+  "viewingDistanceMeters": 1,
+  "strictTextBounds": true,
+  "texts": [
+    {
+      "id": "intentional-overflow",
+      "role": "body",
+      "text": "這段文字必須被溢出檢查擋下",
+      "fontFamily": "Microsoft JhengHei",
+      "x": 100,
+      "y": 100,
+      "width": 280,
+      "height": 100,
+      "size": 160,
+      "lineHeight": 1.15,
+      "color": "#000000",
+      "align": "near",
+      "valign": "near",
+      "style": "Regular"
+    }
+  ]
+}
