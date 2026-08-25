@@ -1,0 +1,12 @@
+# Generated poster artifacts
+poster-canvas.html
+poster-config-reviewed.json
+*.preview.jpg
+
+# Local working directories
+work/
+outputs/
+
+# OS files
+Thumbs.db
+.DS_Store

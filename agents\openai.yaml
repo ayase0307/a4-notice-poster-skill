@@ -1,0 +1,4 @@
+interface:
+  display_name: "A4 公告海報製作"
+  short_description: "確認參考風格、選擇預設方向，再完成本機字型排版與印刷定稿"
+  default_prompt: "Use $a4-notice-poster to clarify my requirements, obtain approval for an integrated concept, rebuild it with a text-free background and local-font text layers, review the canvas, and export a verified A4 poster only after approval."
