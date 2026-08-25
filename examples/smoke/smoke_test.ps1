@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $renderer = Join-Path $repoRoot 'scripts\render_a4_poster.ps1'
@@ -105,7 +105,9 @@ try {
     $fontPayloadMatch = [regex]::Match($canvasHtml, "fonts=decode\('([^']+)'\)")
     if (-not $fontPayloadMatch.Success) { throw 'Could not locate the font payload in the HTML canvas.' }
     $fontJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($fontPayloadMatch.Groups[1].Value))
-    $canvasFonts = @($fontJson | ConvertFrom-Json)
+    # Cast, do not wrap: Windows PowerShell 5.1 emits a JSON array as one object,
+    # so @(...) would produce a single-element array holding every font name.
+    $canvasFonts = [string[]]($fontJson | ConvertFrom-Json)
     if ($canvasFonts -notcontains 'Microsoft JhengHei') {
         throw 'HTML canvas dropped the configured English font alias from its selector.'
     }

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 function Get-PosterKinsokuIssues([string]$Text, [string]$BlockId) {
     if ([string]::IsNullOrEmpty($Text)) { return @() }

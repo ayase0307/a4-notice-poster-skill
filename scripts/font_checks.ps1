@@ -90,7 +90,8 @@ function Get-MissingPosterGlyphs(
         $hfont = $Font.ToHfont()
         $previous = [PosterNativeFontMethods]::SelectObject($hdc, $hfont)
         foreach ($element in $elements) {
-            $glyphs = [ushort[]]::new($element.Length)
+            # [uint16], not [ushort]: Windows PowerShell 5.1 has no ushort accelerator.
+            $glyphs = [uint16[]]::new($element.Length)
             $result = [PosterNativeFontMethods]::GetGlyphIndices($hdc, $element, $element.Length, $glyphs, 1)
             if ($result -eq [uint32]::MaxValue -or ($glyphs | Where-Object { $_ -eq 0xFFFF }).Count -gt 0) {
                 $codePoints = [System.Collections.Generic.List[string]]::new()

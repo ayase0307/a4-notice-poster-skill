@@ -118,14 +118,34 @@ Pass `-ReportPath <path>.json` when automation or CI needs structured results. T
    ./scripts/build_poster_canvas.ps1 -ConfigPath ./poster-config.json -ConceptPath ./concept.png
    ```
 
-2. Open the reported HTML path in Codex's in-app browser. Select a text block and compare installed fonts, style, size, line height, position, alignment, and line breaks.
-3. Correct placement directly on the canvas instead of guessing coordinates from the image. Drag a text block to move it; the arrow keys nudge the selected block by `1 px` and `Shift` plus an arrow key by `10 px`. The `X` and `Y` fields update live.
-4. Use the concept overlay to verify placement against the approved design. The slider cross-fades the concept over the current typesetting. Difference mode subtracts the two, so matching pixels turn black and every displaced or resized block glows. Both are measurements of the actual rendered positions; do not replace them with a visual estimate of where a block "looks right".
-5. Record the selected values in the JSON config. Browser changes are temporary until the downloaded or reported JSON is saved back to the config.
-6. Render a review PNG with the production renderer and show it in Codex. Inspect the full page and 100% crops of every text region. Approval 3 must use this exact render because browser and `System.Drawing` font metrics may differ.
-7. After Approval 3, export and verify the final deliverables.
+2. Open the reported HTML path in Codex's in-app browser. Click a block to select it; its `id` appears on a badge above the box. Compare installed fonts, style, size, line height, position, alignment, and line breaks.
+3. Correct placement directly on the canvas instead of guessing coordinates from the image. Drag a block to move it, drag the blue handle on its bottom-right corner to resize it, and nudge the selected block with the arrow keys by `1 px` or with `Shift` plus an arrow key by `10 px`. The `X`, `Y`, `寬度`, and `高度` fields update live.
+4. Use measure mode to read real geometry instead of estimating it. Tick `量測模式`, drag a rectangle over the visible panel interior, wave crest, or cleared text area, and the readout gives its `x`, `y`, `width`, and `height` in final-canvas pixels. `套用到選取方框` writes those four numbers straight into the selected block. This is how panel interiors get measured; do not type coordinates read off the image by eye.
+5. Use the concept overlay to verify placement against the approved design. The slider cross-fades the concept over the current typesetting. Difference mode subtracts the two, so matching pixels turn black and every displaced or resized block glows. Both are measurements of the actual rendered positions; do not replace them with a visual estimate of where a block "looks right".
+6. Record the selected values in the JSON config. `複製 JSON` puts the whole edited config on the clipboard; `下載` writes `poster-config-reviewed.json`. Browser changes are temporary until that JSON is saved back to the config file.
+7. Render a review PNG with the production renderer and show it in Codex. Inspect the full page and 1:1 crops of every text region. Approval 3 must use this exact render because browser and `System.Drawing` font metrics may differ.
+8. After Approval 3, export and verify the final deliverables.
+
+## Reading text at 1:1
+
+`crop_text_regions.ps1` produces the crops that the text audit and Approval 3 both require. It never invents detail: `-Scale` enlarges with nearest neighbour, so blurred pixels stay visibly blurred.
+
+```powershell
+# Every rendered block, taken from the config, with 24 canvas px of padding
+./scripts/crop_text_regions.ps1 -ImagePath ./poster.png -ConfigPath ./poster-config.json -Scale 2
+
+# Areas that are not in the config, such as kept generated text, in image pixels
+./scripts/crop_text_regions.ps1 -ImagePath ./concept.png -Regions "title:80,60,900,320" -Scale 2
+
+# Sweep a whole poster when the text regions are not known yet
+./scripts/crop_text_regions.ps1 -ImagePath ./concept.png -Grid 2x3 -Scale 2
+```
+
+`-ConfigPath` maps config coordinates through the image-to-canvas ratio, so it works on the concept, a preview, and the final render alike. `-Grid` tiles overlap so a line of text is never split across two crops.
 
 ## Measuring generated backgrounds
+
+Measure mode on the review canvas already reports final-canvas pixels, so prefer it. Use the formulas below only for numbers taken from a source image at a different size.
 
 If the source background has dimensions `sourceWidth x sourceHeight`, convert measured source coordinates to the final canvas with:
 

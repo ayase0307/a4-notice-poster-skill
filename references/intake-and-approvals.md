@@ -71,8 +71,11 @@ Visual direction:
 Reference image treatment:
 Preset style or custom direction:
 Required assets and constraints:
+Generated text kept as artwork:
 Intentionally unresolved items:
 ```
+
+Fill `Generated text kept as artwork` during the text audit in `references/production-reconstruction.md`. List each kept block and its exact wording, because kept text lives in the image instead of the layout config and no automated check can read it.
 
 Ask for confirmation of this record. Later changes update the record rather than replacing it silently.
 
@@ -81,7 +84,7 @@ Copy the approved viewing distance into the production config as `viewingDistanc
 ## Three approval gates
 
 1. **Requirements and copy:** approves the brief and formal content used to make the concept.
-2. **Visual direction:** approves the actual integrated concept image and permits reconstruction.
+2. **Visual direction:** approves the actual integrated concept image and permits reconstruction. Before any pixel is edited, it also has to approve the Keep or Replace decision for every generated text region, since kept characters become uncorrectable once the master is cleaned.
 3. **Typesetting canvas:** approves the actual background, exact text, fonts, spacing, and composition and permits final export.
 
 If the user changes an earlier approved decision, return only to the earliest affected gate. A phone-number correction returns to typesetting; a new visual direction returns to the visual gate.
