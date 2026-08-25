@@ -23,6 +23,25 @@
 
 詳細規則位於 `references/preset-styles.md`。
 
+## 同一主題的風格比較
+
+以下六張都使用同一主題「社區免費健康檢查日」與相同活動資訊。圖片先生成無字背景，再用本機字型疊入可驗證的繁體中文；因此可以直接比較各預設的構圖、配色、插畫語言與資訊層級。
+
+<table>
+  <tr>
+    <td align="center"><strong>clinical-trust｜醫療信賴</strong><br><a href="assets/style-previews/clinical-trust.jpg"><img src="assets/style-previews/clinical-trust.jpg" width="420" alt="醫療信賴風格的社區免費健康檢查日海報"></a></td>
+    <td align="center"><strong>public-institutional｜公部門正式</strong><br><a href="assets/style-previews/public-institutional.jpg"><img src="assets/style-previews/public-institutional.jpg" width="420" alt="公部門正式風格的社區免費健康檢查日海報"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>warm-community｜溫暖社區</strong><br><a href="assets/style-previews/warm-community.jpg"><img src="assets/style-previews/warm-community.jpg" width="420" alt="溫暖社區風格的社區免費健康檢查日海報"></a></td>
+    <td align="center"><strong>high-alert｜高辨識警示</strong><br><a href="assets/style-previews/high-alert.jpg"><img src="assets/style-previews/high-alert.jpg" width="420" alt="高辨識警示風格的社區免費健康檢查日海報"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>editorial-minimal｜編輯極簡</strong><br><a href="assets/style-previews/editorial-minimal.jpg"><img src="assets/style-previews/editorial-minimal.jpg" width="420" alt="編輯極簡風格的社區免費健康檢查日海報"></a></td>
+    <td align="center"><strong>human-centered-illustration｜人物情境插畫</strong><br><a href="assets/style-previews/human-centered-illustration.jpg"><img src="assets/style-previews/human-centered-illustration.jpg" width="420" alt="人物情境插畫風格的社區免費健康檢查日海報"></a></td>
+  </tr>
+</table>
+
 ## 安裝
 
 將 repository clone 到 Codex skills 目錄：
