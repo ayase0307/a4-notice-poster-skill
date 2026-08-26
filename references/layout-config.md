@@ -29,6 +29,8 @@ Use UTF-8 JSON. Coordinates and font sizes are pixels on the final canvas. Relat
       "size": 190,
       "lineHeight": 1.05,
       "color": "#10314C",
+      "strokeColor": "#FFFFFF",
+      "strokeWidth": 10,
       "align": "near",
       "valign": "center",
       "style": "Regular"
@@ -56,6 +58,8 @@ Use UTF-8 JSON. Coordinates and font sizes are pixels on the final canvas. Relat
 - `size`: font size in pixels.
 - `lineHeight`: optional line-height multiplier. Defaults to `1.15`. The production renderer measures and draws explicit lines with this value.
 - `color`: `#RRGGBB` or `#AARRGGBB`.
+- `strokeColor`: optional `#RRGGBB` or `#AARRGGBB` outline color. Set it together with a positive `strokeWidth`.
+- `strokeWidth`: optional outline radius in final-canvas pixels. The renderer insets the drawable text bounds by this amount and includes twice this value in overflow checks.
 - `align`: `near`, `center`, or `far`.
 - `valign`: `near`, `center`, or `far`.
 - `style`: `Regular`, `Bold`, `Italic`, or `Bold, Italic`. For a naturally heavy family, use `Regular` to preserve its designed proportions.

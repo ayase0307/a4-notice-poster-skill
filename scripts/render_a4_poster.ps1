@@ -82,6 +82,8 @@ function Get-PosterTextMetrics(
     $normalized = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
     $lines = @($normalized.Split([char]10))
     if ($lines.Count -eq 0) { $lines = @('') }
+    $lineList = [System.Collections.Generic.List[string]]::new()
+    foreach ($lineValue in $lines) { $lineList.Add([string]$lineValue) }
     $format = [System.Drawing.StringFormat]::GenericTypographic.Clone()
     try {
         $format.FormatFlags = $format.FormatFlags -bor [System.Drawing.StringFormatFlags]::MeasureTrailingSpaces -bor [System.Drawing.StringFormatFlags]::NoWrap -bor [System.Drawing.StringFormatFlags]::NoClip
@@ -93,7 +95,7 @@ function Get-PosterTextMetrics(
         }
         $lineAdvance = $Font.GetHeight($Graphics) * $LineHeight
         return [pscustomobject]@{
-            Lines = $lines
+            Lines = $lineList
             Width = [float]$maxWidth
             Height = [float]($lineAdvance * $lines.Count)
             LineAdvance = [float]$lineAdvance
@@ -108,6 +110,9 @@ function Draw-PosterText(
     [System.Drawing.Graphics]$Graphics,
     [System.Drawing.Font]$Font,
     [System.Drawing.Brush]$Brush,
+    [System.Drawing.Brush]$StrokeBrush,
+    [float]$StrokeWidth,
+    [string]$Text,
     [pscustomobject]$Metrics,
     [System.Drawing.RectangleF]$Bounds,
     [string]$HorizontalAlignment,
@@ -125,15 +130,32 @@ function Draw-PosterText(
             'far' { $Bounds.Bottom - $Metrics.Height }
             default { throw "Unsupported alignment '$VerticalAlignment'." }
         }
-        for ($index = 0; $index -lt $Metrics.Lines.Count; $index++) {
-            $line = [string]$Metrics.Lines[$index]
+        $normalizedText = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+        $drawLines = @($normalizedText.Split([char]10))
+        for ($index = 0; $index -lt $drawLines.Count; $index++) {
+            $line = [string]$drawLines[$index]
             if ($line.Length -eq 0) { continue }
+            $lineY = [float]($startY + ($index * $Metrics.LineAdvance))
+            $lineDrawingHeight = [float][Math]::Max($Metrics.LineAdvance, $Bounds.Bottom - $lineY)
             $lineBounds = [System.Drawing.RectangleF]::new(
                 $Bounds.X,
-                [float]($startY + ($index * $Metrics.LineAdvance)),
+                $lineY,
                 $Bounds.Width,
-                $Metrics.LineAdvance
+                $lineDrawingHeight
             )
+            if ($null -ne $StrokeBrush -and $StrokeWidth -gt 0) {
+                $strokeSteps = [Math]::Max(16, [int][Math]::Ceiling($StrokeWidth * 2))
+                for ($strokeIndex = 0; $strokeIndex -lt $strokeSteps; $strokeIndex++) {
+                    $angle = (2.0 * [Math]::PI * $strokeIndex) / $strokeSteps
+                    $strokeBounds = [System.Drawing.RectangleF]::new(
+                        [float]($lineBounds.X + ([Math]::Cos($angle) * $StrokeWidth)),
+                        [float]($lineBounds.Y + ([Math]::Sin($angle) * $StrokeWidth)),
+                        $lineBounds.Width,
+                        $lineBounds.Height
+                    )
+                    $Graphics.DrawString($line, $Font, $StrokeBrush, $strokeBounds, $format)
+                }
+            }
             $Graphics.DrawString($line, $Font, $Brush, $lineBounds, $format)
         }
     }
@@ -229,19 +251,38 @@ try {
         $styleName = if ($block.style) { [string]$block.style } else { 'Regular' }
         $font = New-VerifiedPosterFont $blockFontFamily ([float]$block.size) $styleName
         $brush = [System.Drawing.SolidBrush]::new((Convert-HexColor ([string]$block.color)))
+        $strokeWidth = if ($null -ne $block.strokeWidth) { [float]$block.strokeWidth } else { 0 }
+        if ($strokeWidth -lt 0) { throw "Text block '$id' strokeWidth cannot be negative." }
+        if ($strokeWidth -gt 0 -and [string]::IsNullOrWhiteSpace([string]$block.strokeColor)) {
+            throw "Text block '$id' must set strokeColor when strokeWidth is greater than zero."
+        }
+        $strokeBrush = if ($strokeWidth -gt 0) { [System.Drawing.SolidBrush]::new((Convert-HexColor ([string]$block.strokeColor))) } else { $null }
         try {
             $text = [string]$block.text
             Assert-PosterFontGlyphs $graphics $font $text $id
             $lineHeight = if ($block.lineHeight) { [float]$block.lineHeight } else { 1.15 }
             if ($lineHeight -le 0) { throw "Text block '$id' lineHeight must be greater than zero." }
             $metrics = Get-PosterTextMetrics $graphics $font $text $lineHeight
-            if ($metrics.Width -gt ($bounds.Width + 2) -or $metrics.Height -gt ($bounds.Height + 2)) {
-                $overflows.Add("$id measured $([Math]::Ceiling($metrics.Width))x$([Math]::Ceiling($metrics.Height)) exceeds $($block.width)x$($block.height)")
+            $drawBounds = if ($strokeWidth -gt 0) {
+                [System.Drawing.RectangleF]::new(
+                    [float]($bounds.X + $strokeWidth),
+                    [float]($bounds.Y + $strokeWidth),
+                    [float]($bounds.Width - (2 * $strokeWidth)),
+                    [float]($bounds.Height - (2 * $strokeWidth))
+                )
+            } else { $bounds }
+            if ($drawBounds.Width -le 0 -or $drawBounds.Height -le 0) {
+                throw "Text block '$id' strokeWidth leaves no drawable area inside its bounds."
             }
-            Draw-PosterText $graphics $font $brush $metrics $bounds ([string]$block.align) ([string]$block.valign)
-            $fontResolutions.Add("$id=$blockFontFamily->$($font.FontFamily.Name)/$styleName")
+            if ($metrics.Width -gt ($drawBounds.Width + 2) -or $metrics.Height -gt ($drawBounds.Height + 2)) {
+                $overflows.Add("$id measured $([Math]::Ceiling($metrics.Width + (2 * $strokeWidth)))x$([Math]::Ceiling($metrics.Height + (2 * $strokeWidth))) including stroke exceeds $($block.width)x$($block.height)")
+            }
+            Draw-PosterText $graphics $font $brush $strokeBrush $strokeWidth $text $metrics $drawBounds ([string]$block.align) ([string]$block.valign)
+            $strokeReport = if ($strokeWidth -gt 0) { "/stroke=$([string]$block.strokeColor),$strokeWidth" } else { '' }
+            $fontResolutions.Add("$id=$blockFontFamily->$($font.FontFamily.Name)/$styleName$strokeReport")
         }
         finally {
+            if ($null -ne $strokeBrush) { $strokeBrush.Dispose() }
             $brush.Dispose()
             $font.Dispose()
         }
