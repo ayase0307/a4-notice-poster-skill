@@ -1,5 +1,4 @@
 ﻿param(
-    [Parameter(Mandatory = $true)]
     [string]$ConfigPath,
     [string]$OutputPath = '',
     [string]$ConceptPath = '',
@@ -7,11 +6,35 @@
     [int]$Port = 0,
     [int]$TimeoutMinutes = 30,
     [string]$SaveConfigPath = '',
+    [string]$DraftPath = '',
+    [string]$ReadyPath = '',
+    [string]$ResultPath = '',
+    [switch]$Detach,
+    [string]$WorkerStatePath = '',
     [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
+
+$serveRequested = [bool]$Serve
+if (-not [string]::IsNullOrWhiteSpace($WorkerStatePath)) {
+    $workerState = Get-Content -Raw -Encoding UTF8 -LiteralPath $WorkerStatePath | ConvertFrom-Json
+    $ConfigPath = [string]$workerState.ConfigPath
+    $OutputPath = [string]$workerState.OutputPath
+    $ConceptPath = [string]$workerState.ConceptPath
+    $Port = [int]$workerState.Port
+    $TimeoutMinutes = [int]$workerState.TimeoutMinutes
+    $SaveConfigPath = [string]$workerState.SaveConfigPath
+    $DraftPath = [string]$workerState.DraftPath
+    $ReadyPath = [string]$workerState.ReadyPath
+    $ResultPath = [string]$workerState.ResultPath
+    $NoBrowser = [bool]$workerState.NoBrowser
+    $serveRequested = $true
+}
+elseif ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    throw 'ConfigPath is required unless WorkerStatePath supplies the detached worker settings.'
+}
 
 function Resolve-ConfigPath([string]$Value, [string]$BaseDirectory) {
     if ([System.IO.Path]::IsPathRooted($Value)) {
@@ -30,6 +53,42 @@ function Get-PosterDataUri([string]$Path) {
     return "data:$mime;base64,$([Convert]::ToBase64String([IO.File]::ReadAllBytes($Path)))"
 }
 
+function Write-PosterCanvasJsonFile([string]$Path, [string]$Json) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $directory = Split-Path -Parent $Path
+    if ($directory) { New-Item -ItemType Directory -Force -Path $directory | Out-Null }
+    $temporaryPath = "$Path.tmp-$([guid]::NewGuid().ToString('N'))"
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Json, [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force }
+    }
+}
+
+function Read-PosterCanvasDraft([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $draft = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json
+        if ($draft.canvas -and $draft.texts) { return $draft }
+    }
+    catch {
+        Write-Warning "Ignoring unreadable canvas draft: $($_.Exception.Message)"
+    }
+    return $null
+}
+
+function Test-PosterCanvasPayload([string]$Body) {
+    try {
+        $parsed = $Body | ConvertFrom-Json
+        return ($null -ne $parsed -and $parsed.canvas -and $parsed.texts)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Write-PosterCanvasResponse(
     [System.Net.HttpListenerResponse]$Response,
     [int]$Status,
@@ -44,7 +103,16 @@ function Write-PosterCanvasResponse(
     $Response.Close()
 }
 
-function Receive-PosterCanvasEdit([string]$Html, [int]$Port, [int]$TimeoutMinutes, [bool]$OpenBrowser) {
+function Receive-PosterCanvasEdit(
+    [string]$Html,
+    [int]$Port,
+    [int]$TimeoutMinutes,
+    [bool]$OpenBrowser,
+    [string]$DraftPath,
+    [string]$ReadyPath,
+    [string]$ResultPath,
+    [object]$BeforeConfig
+) {
     if ($Port -le 0) {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
         $probe.Start()
@@ -64,6 +132,13 @@ function Receive-PosterCanvasEdit([string]$Html, [int]$Port, [int]$TimeoutMinute
 
     Write-Host "Review canvas is live at $url"
     Write-Host "Waiting up to $TimeoutMinutes minute(s) for the reviewer to press the save button."
+    if (-not [string]::IsNullOrWhiteSpace($ReadyPath)) {
+        Write-PosterCanvasJsonFile $ReadyPath (@{
+            ok = $true
+            url = $url
+            readyAt = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json -Compress)
+    }
     if ($OpenBrowser) { Start-Process $url | Out-Null }
 
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -95,22 +170,52 @@ function Receive-PosterCanvasEdit([string]$Html, [int]$Port, [int]$TimeoutMinute
                 try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
 
                 # Never write a payload back to disk before it parses and looks like a poster config.
-                try { $parsed = $body | ConvertFrom-Json }
-                catch {
-                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Payload was not valid JSON.'
-                    continue
-                }
-                if (-not $parsed.canvas -or -not $parsed.texts) {
-                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Payload is missing canvas or texts.'
+                if (-not (Test-PosterCanvasPayload $body)) {
+                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Payload was not valid JSON or is missing canvas/texts.'
                     continue
                 }
 
                 Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+                if (-not [string]::IsNullOrWhiteSpace($DraftPath)) {
+                    Remove-Item -LiteralPath $DraftPath -Force -ErrorAction SilentlyContinue
+                }
+                if (-not [string]::IsNullOrWhiteSpace($ResultPath)) {
+                    Write-PosterCanvasJsonFile $ResultPath (@{
+                        status = 'saved'
+                        configPath = $SaveConfigPath
+                        changes = @(Get-PosterCanvasChanges $BeforeConfig ($body | ConvertFrom-Json))
+                        savedAt = (Get-Date).ToUniversalTime().ToString('o')
+                    } | ConvertTo-Json -Compress)
+                }
                 $saved = $body
                 break
             }
+            elseif ($request.HttpMethod -eq 'POST' -and $path -eq '/autosave') {
+                if ($request.ContentLength64 -gt 4MB) {
+                    Write-PosterCanvasResponse $context.Response 413 'text/plain; charset=utf-8' 'Draft payload is too large.'
+                    continue
+                }
+                $reader = [IO.StreamReader]::new($request.InputStream, [Text.Encoding]::UTF8)
+                try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                if (-not (Test-PosterCanvasPayload $body)) {
+                    Write-PosterCanvasResponse $context.Response 400 'text/plain; charset=utf-8' 'Draft payload was not valid JSON or is missing canvas/texts.'
+                    continue
+                }
+                Write-PosterCanvasJsonFile $DraftPath $body
+                Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+            }
+            elseif ($request.HttpMethod -eq 'GET' -and $path -eq '/ping') {
+                Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+            }
+            elseif ($request.HttpMethod -eq 'POST' -and $path -eq '/draft-reset') {
+                Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+                Remove-Item -LiteralPath $DraftPath -Force -ErrorAction SilentlyContinue
+            }
             elseif ($request.HttpMethod -eq 'POST' -and $path -eq '/cancel') {
                 Write-PosterCanvasResponse $context.Response 200 'application/json; charset=utf-8' '{"ok":true}'
+                if (-not [string]::IsNullOrWhiteSpace($ResultPath)) {
+                    Write-PosterCanvasJsonFile $ResultPath (@{ status = 'cancelled'; at = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json -Compress)
+                }
                 Write-Host 'Reviewer closed the canvas without saving.'
                 break
             }
@@ -122,9 +227,25 @@ function Receive-PosterCanvasEdit([string]$Html, [int]$Port, [int]$TimeoutMinute
             }
         }
     }
+    catch {
+        if (-not [string]::IsNullOrWhiteSpace($ResultPath)) {
+            Write-PosterCanvasJsonFile $ResultPath (@{
+                status = 'error'
+                message = $_.Exception.Message
+                at = (Get-Date).ToUniversalTime().ToString('o')
+            } | ConvertTo-Json -Compress)
+        }
+        throw
+    }
     finally {
         $listener.Stop()
         $listener.Close()
+    }
+    if (-not $saved -and -not [string]::IsNullOrWhiteSpace($ResultPath)) {
+        Write-PosterCanvasJsonFile $ResultPath (@{
+            status = 'timeout'
+            at = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json -Compress)
     }
     return $saved
 }
@@ -194,6 +315,18 @@ else {
     $SaveConfigPath = Resolve-ConfigPath $SaveConfigPath $baseDirectory
 }
 
+if ([string]::IsNullOrWhiteSpace($DraftPath)) {
+    $DraftPath = "$configFullPath.canvas-draft.json"
+}
+elseif (-not [System.IO.Path]::IsPathRooted($DraftPath)) {
+    $DraftPath = Join-Path $baseDirectory $DraftPath
+}
+$DraftPath = [System.IO.Path]::GetFullPath($DraftPath)
+
+$sourceConfig = $config
+$storedDraft = Read-PosterCanvasDraft $DraftPath
+if ($null -ne $storedDraft) { $config = $storedDraft }
+
 $backgroundDataUri = Get-PosterDataUri $backgroundPath
 $conceptDataUri = if ($conceptFullPath) { Get-PosterDataUri $conceptFullPath } else { '' }
 $configuredFontNames = @(
@@ -206,6 +339,7 @@ $fontNames = @(
 ) | Sort-Object -Unique
 $configJson = $config | ConvertTo-Json -Depth 20 -Compress
 $configBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($configJson))
+$draftBase64 = if ($null -ne $storedDraft) { $configBase64 } else { '' }
 $fontsBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($fontNames | ConvertTo-Json -Compress)))
 
 $htmlTemplate = @'
@@ -226,6 +360,11 @@ $htmlTemplate = @'
 .concept{position:absolute;inset:0;background-size:100% 100%;background-repeat:no-repeat;pointer-events:none}.concept.diff{mix-blend-mode:difference}
 .measure{position:absolute;border:2px solid #f08c00;background:#f08c0022;pointer-events:none}
 .poster.measuring{cursor:crosshair}.poster.measuring .text{pointer-events:none}
+.grid-overlay{position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(to right,#1d6ee833 0 1px,transparent 1px var(--grid-size)),repeating-linear-gradient(to bottom,#1d6ee833 0 1px,transparent 1px var(--grid-size))}
+.guide{position:absolute;background:#1d6ee8;pointer-events:none;z-index:20}.guide.vertical{width:1px;top:0;bottom:0}.guide.horizontal{height:1px;left:0;right:0}
+.draft-banner{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0;padding:9px 10px;border:1px solid #b7d3f5;background:#eef5ff;border-radius:8px;font-size:12px}.draft-banner button{border:0;border-radius:6px;padding:6px 8px;background:#d62f2f;color:#fff;cursor:pointer}
+.poster.previewing .text{outline:0}.poster.previewing .text::after,.poster.previewing .handle,.poster.previewing .grid-overlay,.poster.previewing .guide,.poster.previewing .measure,.poster.previewing .concept{display:none}
+.poster.previewing{cursor:default}.poster.previewing .text{pointer-events:none}
 .panel{position:sticky;top:20px;align-self:start;background:#fff;border-radius:16px;padding:18px;box-shadow:0 10px 30px #1720331a;max-height:calc(100vh - 40px);overflow:auto}
 h1{font-size:20px;margin:0 0 8px}.hint{font-size:13px;color:#647087;margin:0 0 16px;line-height:1.6}.field{margin:12px 0}.field label{display:block;font-size:12px;font-weight:700;margin-bottom:5px}.field input,.field select,.field textarea{width:100%;padding:8px;border:1px solid #cbd2dc;border-radius:7px;background:#fff}.field input[type=checkbox]{width:auto;padding:0;margin-right:6px}.field input[readonly]{background:#f2f5f9;color:#647087}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions{display:flex;gap:8px;margin-top:14px}.actions button{flex:1;border:0;border-radius:8px;padding:10px 12px;background:#172033;color:#fff;cursor:pointer;font-size:13px}.actions button.secondary{background:#e7ebf1;color:#172033}
 .onion{background:#f5f8fc;border:1px solid #dbe3ec;border-radius:10px;padding:2px 12px 10px;margin-bottom:6px}
@@ -235,6 +374,9 @@ h1{font-size:20px;margin:0 0 8px}.hint{font-size:13px;color:#647087;margin:0 0 1
 <body>
 <main class="app"><section class="stage"><div id="poster" class="poster"></div></section><aside class="panel">
 <h1>A4 海報排版畫布</h1><p class="hint">點選方框即選取；拖曳可移動，拉右下角藍點可改尺寸，方向鍵微調 1px、Shift+方向鍵 10px。紅框＝瀏覽器預覽已溢出。量測模式可直接在海報上框出面板內緣，再一鍵套用成文字方框。改完按<b>複製 JSON</b>貼回設定檔，仍須以正式 renderer 驗證。</p>
+<div id="draftBanner" class="draft-banner" hidden><span>已載入上次未定稿編輯。</span><button id="discardDraft" type="button">還原原始</button></div>
+<div class="onion"><div class="row"><div class="field"><label for="previewToggle"><input id="previewToggle" type="checkbox"><span id="previewLabel">成品預覽（隱藏編輯框）</span></label></div><div class="field"><label for="gridToggle"><input id="gridToggle" type="checkbox">格線</label></div></div>
+<div class="row"><div class="field"><label for="gridSize">格線間距 px</label><input id="gridSize" type="number" min="5" step="5" value="50"></div><div class="field"><label for="snapThreshold">吸附距離 px</label><input id="snapThreshold" type="number" min="0" step="1" value="12"></div></div><p id="assistStatus" class="hint">拖曳時靠近其他文字框邊緣或中心會自動對齊；按住 Alt 可自由放置。</p></div>
 <div id="onionRow" class="onion" hidden><div class="field"><label for="onion">概念圖疊圖 <span id="onionValue">0</span>%</label><input id="onion" type="range" min="0" max="100" value="0"></div><div class="field"><label for="onionDiff"><input id="onionDiff" type="checkbox">差異模式（重疊處變黑即為對齊）</label></div></div>
 <div class="onion"><div class="field"><label for="measure"><input id="measure" type="checkbox">量測模式（在海報上拖曳框選）</label></div>
 <div class="row"><div class="field"><label for="mx">量測 X</label><input id="mx" type="number" readonly></div><div class="field"><label for="my">量測 Y</label><input id="my" type="number" readonly></div></div>
@@ -254,8 +396,10 @@ h1{font-size:20px;margin:0 0 8px}.hint{font-size:13px;color:#647087;margin:0 0 1
 </aside></main>
 <script>
 const decode=b64=>JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64),c=>c.charCodeAt(0))));
-const original=decode('__CONFIG_BASE64__');let config=structuredClone(original);const fonts=decode('__FONTS_BASE64__');const bg='__BACKGROUND_DATA_URI__';const concept='__CONCEPT_DATA_URI__';
+const original=decode('__CONFIG_BASE64__');const storedDraftEncoded='__DRAFT_BASE64__';const storedDraft=storedDraftEncoded?decode(storedDraftEncoded):null;let config=storedDraft||structuredClone(original);const fonts=decode('__FONTS_BASE64__');const bg='__BACKGROUND_DATA_URI__';const concept='__CONCEPT_DATA_URI__';const storageKey='a4-poster-canvas:__CONFIG_KEY_BASE64__';
 const poster=document.querySelector('#poster'),blockSelect=document.querySelector('#block');
+const previewToggle=document.querySelector('#previewToggle'),previewLabel=document.querySelector('#previewLabel'),gridToggle=document.querySelector('#gridToggle'),gridSize=document.querySelector('#gridSize'),snapThreshold=document.querySelector('#snapThreshold'),assistStatus=document.querySelector('#assistStatus');
+const draftBanner=document.querySelector('#draftBanner'),discardDraft=document.querySelector('#discardDraft');
 const onionRow=document.querySelector('#onionRow'),onion=document.querySelector('#onion'),onionDiff=document.querySelector('#onionDiff'),onionValue=document.querySelector('#onionValue');
 const measureMode=document.querySelector('#measure'),mx=document.querySelector('#mx'),my=document.querySelector('#my'),mw=document.querySelector('#mw'),mh=document.querySelector('#mh');
 const fields=['text','font','style','lineHeight','size','color','x','y','width','height','align','valign'];const el=Object.fromEntries(fields.map(id=>[id,document.querySelector('#'+id)]));
@@ -263,17 +407,22 @@ const pct=(n,total)=>`${100*n/total}%`;const cqw=(n,total)=>`${100*n/total}cqw`;
 const canvasWidth=()=>config.canvas?.width||2480;const canvasHeight=()=>config.canvas?.height||3508;
 const selected=()=>config.texts?.[Number(blockSelect.value)||0];
 let measured=null;
-function render(){const w=canvasWidth(),h=canvasHeight();poster.style.aspectRatio=`${w}/${h}`;poster.style.backgroundImage=`url(${JSON.stringify(bg)})`;poster.classList.toggle('measuring',measureMode.checked);poster.innerHTML='';
+function snapBox(index,axis,value,size){const threshold=Math.max(0,Number(snapThreshold.value)||0);const targets=[];(config.texts||[]).forEach((t,targetIndex)=>{if(targetIndex===index)return;const anchor=axis==='x'?[t.x,t.x+t.width/2,t.x+t.width]:[t.y,t.y+t.height/2,t.y+t.height];targets.push(...anchor)});let best={delta:null,aligned:null};[value,value+size/2,value+size].forEach(edge=>{[...new Set(targets)].forEach(target=>{const delta=target-edge;if(Math.abs(delta)<=threshold&&(best.delta===null||Math.abs(delta)<Math.abs(best.delta)))best={delta,aligned:target}})});return best.delta===null?{value,guides:[]}:{value:value+best.delta,guides:[best.aligned]}}
+function scheduleDraft(){clearTimeout(scheduleDraft.timer);scheduleDraft.timer=setTimeout(async()=>{try{if(__SERVE__){await fetch('/autosave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)})}else{localStorage.setItem(storageKey,JSON.stringify(config))}assistStatus.textContent='已自動保存草稿 '+new Date().toLocaleTimeString();assistStatus.style.color='#1a7f37'}catch(err){assistStatus.textContent='草稿保存失敗：'+err.message;assistStatus.style.color='#d62f2f'}},350)}
+function flushDraft(){if(!__SERVE__)return;navigator.sendBeacon('/autosave',new Blob([JSON.stringify(config)],{type:'application/json'}))}
+function render(){const w=canvasWidth(),h=canvasHeight();poster.style.aspectRatio=`${w}/${h}`;poster.style.backgroundImage=`url(${JSON.stringify(bg)})`;poster.classList.toggle('measuring',measureMode.checked&&!previewToggle.checked);poster.classList.toggle('previewing',previewToggle.checked);poster.innerHTML='';poster.style.setProperty('--grid-size',cqw(Math.max(5,Number(gridSize.value)||50),w));
+ if(gridToggle.checked){const g=document.createElement('div');g.className='grid-overlay';poster.appendChild(g)}
  (config.roundedRectangles||[]).forEach(s=>{const d=document.createElement('div');d.className='shape';Object.assign(d.style,{left:pct(s.x,w),top:pct(s.y,h),width:pct(s.width,w),height:pct(s.height,h),borderRadius:pct(s.radius,s.width),background:cssColor(s.fill)});poster.appendChild(d)});
  (config.texts||[]).forEach((t,i)=>{const isSelected=i===blockSelect.selectedIndex;const d=document.createElement('div');d.className='text'+(isSelected?' selected':'');d.dataset.index=i;d.dataset.label=t.id||t.text.slice(0,10)||`文字 ${i+1}`;d.textContent=t.text;Object.assign(d.style,{left:pct(t.x,w),top:pct(t.y,h),width:pct(t.width,w),height:pct(t.height,h),fontFamily:`${JSON.stringify(t.fontFamily||config.fontFamily)},sans-serif`,fontSize:cqw(t.size,w),lineHeight:String(t.lineHeight||1.15),color:cssColor(t.color),WebkitTextStroke:(t.strokeWidth&&t.strokeColor)?`${cqw(t.strokeWidth,w)} ${cssColor(t.strokeColor)}`:'0 transparent',paintOrder:'stroke fill',fontWeight:(t.style||'').toLowerCase().includes('bold')?'700':'400',fontStyle:(t.style||'').toLowerCase().includes('italic')?'italic':'normal',textAlign:t.align==='center'?'center':t.align==='far'?'right':'left',justifyContent:hAlign[t.align||'near'],alignItems:vAlign[t.valign||'near']});
   if(isSelected){const g=document.createElement('div');g.className='handle';d.appendChild(g)}
   poster.appendChild(d);requestAnimationFrame(()=>d.classList.toggle('overflow',d.scrollWidth>d.clientWidth+1||d.scrollHeight>d.clientHeight+1))});
- if(measured){const m=document.createElement('div');m.className='measure';Object.assign(m.style,{left:pct(measured.x,w),top:pct(measured.y,h),width:pct(measured.width,w),height:pct(measured.height,h)});poster.appendChild(m)}
- if(concept){const c=document.createElement('div');c.className='concept'+(onionDiff.checked?' diff':'');c.style.backgroundImage=`url(${JSON.stringify(concept)})`;c.style.opacity=onionDiff.checked?'1':String(onion.value/100);poster.appendChild(c)}
+ if(measured&&!previewToggle.checked){const m=document.createElement('div');m.className='measure';Object.assign(m.style,{left:pct(measured.x,w),top:pct(measured.y,h),width:pct(measured.width,w),height:pct(measured.height,h)});poster.appendChild(m)}
+ if(render.guides&&render.guides.length){render.guides.forEach(item=>{const line=document.createElement('div');line.className='guide '+(item.axis==='x'?'vertical':'horizontal');Object.assign(line.style,item.axis==='x'?{left:pct(item.value,w)}:{top:pct(item.value,h)});poster.appendChild(line)})}
+ if(concept&&!previewToggle.checked){const c=document.createElement('div');c.className='concept'+(onionDiff.checked?' diff':'');c.style.backgroundImage=`url(${JSON.stringify(concept)})`;c.style.opacity=onionDiff.checked?'1':String(onion.value/100);poster.appendChild(c)}
 }
 function fillSelects(){blockSelect.innerHTML='';(config.texts||[]).forEach((t,i)=>blockSelect.add(new Option(t.id||t.text.slice(0,20)||`文字 ${i+1}`,i)));el.font.innerHTML='';fonts.forEach(f=>el.font.add(new Option(f,f)))}
 function loadBlock(){const t=selected();if(!t)return;el.text.value=t.text;el.font.value=t.fontFamily||config.fontFamily;el.style.value=t.style||'Regular';el.lineHeight.value=t.lineHeight||1.15;['size','x','y','width','height','align','valign'].forEach(k=>el[k].value=t[k]);el.color.value=cssColor(t.color).slice(0,7)}
-function update(){const t=selected();if(!t)return;t.text=el.text.value;t.fontFamily=el.font.value;t.style=el.style.value;['lineHeight','size','x','y','width','height'].forEach(k=>t[k]=Number(el[k].value));['color','align','valign'].forEach(k=>t[k]=el[k].value);render()}
+function update(){const t=selected();if(!t)return;t.text=el.text.value;t.fontFamily=el.font.value;t.style=el.style.value;['lineHeight','size','x','y','width','height'].forEach(k=>t[k]=Number(el[k].value));['color','align','valign'].forEach(k=>t[k]=el[k].value);render();scheduleDraft()}
 function moveSelected(dx,dy){const t=selected();if(!t)return;t.x=Math.round(t.x+dx);t.y=Math.round(t.y+dy);el.x.value=t.x;el.y.value=t.y;render()}
 function showMeasure(){[mx,my,mw,mh].forEach((f,i)=>f.value=measured?[measured.x,measured.y,measured.width,measured.height][i]:'')}
 const toCanvas=e=>{const r=poster.getBoundingClientRect(),k=canvasWidth()/r.width;return{x:Math.round((e.clientX-r.left)*k),y:Math.round((e.clientY-r.top)*k)}};
@@ -287,32 +436,45 @@ poster.addEventListener('pointerdown',e=>{
 poster.addEventListener('pointermove',e=>{if(!drag)return;
  if(drag.mode==='measure'){const p=toCanvas(e);measured={x:Math.min(p.x,drag.ox),y:Math.min(p.y,drag.oy),width:Math.abs(p.x-drag.ox),height:Math.abs(p.y-drag.oy)};showMeasure();render();return}
  const t=config.texts[drag.i];const dx=(e.clientX-drag.sx)*drag.k,dy=(e.clientY-drag.sy)*drag.k;
- if(drag.mode==='resize'){t.width=Math.max(1,Math.round(drag.ow+dx));t.height=Math.max(1,Math.round(drag.oh+dy));el.width.value=t.width;el.height.value=t.height}
- else{t.x=Math.round(drag.ox+dx);t.y=Math.round(drag.oy+dy);el.x.value=t.x;el.y.value=t.y}
- render()});
+ render.guides=[];
+ if(e.altKey||!Number(document.querySelector('#snapThreshold').value)){drag.altFree=true}
+ else drag.altFree=false;
+ const box=poster.querySelector(`.text[data-index="${drag.i}"]`);
+ if(drag.mode==='resize'){let width=Math.max(1,Math.round(drag.ow+dx)),height=Math.max(1,Math.round(drag.oh+dy));if(!e.altKey){const sx=snapBox(drag.i,'x',t.x+width,width);if(sx.guides.length){width=Math.max(1,Math.round(sx.value-t.x));render.guides.push(...sx.guides.map(value=>({axis:'x',value})))}const sy=snapBox(drag.i,'y',t.y+height,height);if(sy.guides.length){height=Math.max(1,Math.round(sy.value-t.y));render.guides.push(...sy.guides.map(value=>({axis:'y',value})))}}t.width=width;t.height=height;el.width.value=t.width;el.height.value=t.height}
+ else{let x=Math.round(drag.ox+dx),y=Math.round(drag.oy+dy);if(!e.altKey){const snappedX=snapBox(drag.i,'x',x,t.width),snappedY=snapBox(drag.i,'y',y,t.height);if(snappedX.guides.length){x=Math.round(snappedX.value);render.guides.push(...snappedX.guides.map(value=>({axis:'x',value})))}if(snappedY.guides.length){y=Math.round(snappedY.value);render.guides.push(...snappedY.guides.map(value=>({axis:'y',value})))}}t.x=x;t.y=y;el.x.value=t.x;el.y.value=t.y}
+ render();scheduleDraft()});
 poster.addEventListener('pointerup',()=>{drag=null});poster.addEventListener('pointercancel',()=>{drag=null});
 document.addEventListener('keydown',e=>{if(!e.key.startsWith('Arrow'))return;if(/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
  const s=e.shiftKey?10:1;const map={ArrowLeft:[-s,0],ArrowRight:[s,0],ArrowUp:[0,-s],ArrowDown:[0,s]}[e.key];
  if(!map)return;moveSelected(map[0],map[1]);e.preventDefault()});
+previewToggle.onchange=()=>{previewLabel.textContent=previewToggle.checked?'離開成品預覽（顯示編輯框）':'成品預覽（隱藏編輯框）';render()};
+gridToggle.onchange=render;gridSize.oninput=render;
 blockSelect.onchange=()=>{loadBlock();render()};fields.forEach(k=>el[k].oninput=update);
 onion.oninput=()=>{onionValue.textContent=onion.value;render()};onionDiff.onchange=render;measureMode.onchange=render;
-document.querySelector('#applyMeasure').onclick=()=>{const t=selected();if(!t||!measured||!measured.width||!measured.height)return;Object.assign(t,{x:measured.x,y:measured.y,width:measured.width,height:measured.height});loadBlock();render()};
+document.querySelector('#applyMeasure').onclick=()=>{const t=selected();if(!t||!measured||!measured.width||!measured.height)return;Object.assign(t,{x:measured.x,y:measured.y,width:measured.width,height:measured.height});loadBlock();render();scheduleDraft()};
 document.querySelector('#clearMeasure').onclick=()=>{measured=null;showMeasure();render()};
-document.querySelector('#reset').onclick=()=>{config=structuredClone(original);measured=null;showMeasure();fillSelects();loadBlock();render()};
+document.querySelector('#reset').onclick=async()=>{config=structuredClone(original);measured=null;showMeasure();fillSelects();loadBlock();try{localStorage.removeItem(storageKey)}catch{}if(__SERVE__){try{await fetch('/draft-reset',{method:'POST'})}catch(err){}}draftBanner.hidden=true;render()};
 const jsonText=()=>JSON.stringify(config,null,2);
 document.querySelector('#copy').onclick=async ev=>{const s=jsonText(),b=ev.currentTarget;
  try{await navigator.clipboard.writeText(s)}catch{const ta=document.createElement('textarea');ta.value=s;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove()}
  b.textContent='已複製到剪貼簿';setTimeout(()=>b.textContent='複製 JSON',1200)};
 document.querySelector('#download').onclick=()=>{const blob=new Blob([jsonText()],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='poster-config-reviewed.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
 if(concept)onionRow.hidden=false;
+try{const localDraft=localStorage.getItem(storageKey);if(storedDraft){draftBanner.hidden=false}else if(localDraft){config=JSON.parse(localDraft);draftBanner.hidden=false}}catch(err){}
+discardDraft.onclick=()=>{config=structuredClone(original);draftBanner.hidden=true;try{localStorage.removeItem(storageKey)}catch(err){}fillSelects();loadBlock();render();scheduleDraft()};
 if(__SERVE__){
  const status=document.querySelector('#serveStatus'),saveBtn=document.querySelector('#save');
  const say=(m,ok)=>{status.hidden=false;status.textContent=m;status.style.color=ok?'#1a7f37':'#d62f2f'};
  document.querySelector('.hint').insertAdjacentHTML('beforeend','<br><b>改完按「儲存並回傳 agent」</b>，設定會寫回檔案並交還 agent 繼續。');
  document.querySelector('#serveRow').hidden=false;
+ let reviewFinished=false;
+ const ping=async()=>{try{const r=await fetch('/ping',{cache:'no-store'});if(!r.ok)throw new Error(r.status);if(status.hidden||status.textContent.startsWith('回傳失敗'))say('伺服器已連線，編輯會自動保存草稿。',true)}catch{say('伺服器已中斷；按儲存不會寫入主 config。最後成功的草稿仍保留。',false)}};
+ setInterval(ping,2000);ping();
+ window.addEventListener('pagehide',flushDraft);
  saveBtn.onclick=async()=>{saveBtn.disabled=true;saveBtn.textContent='回傳中…';
   try{const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:jsonText()});
    if(!r.ok)throw new Error(await r.text());
+   reviewFinished=true;
    saveBtn.textContent='已回傳';say('已回傳 agent，可以關閉這個分頁。',true)}
   catch(err){saveBtn.disabled=false;saveBtn.textContent='儲存並回傳 agent';say('回傳失敗：'+err.message,false)}};
  document.querySelector('#cancel').onclick=async()=>{
@@ -324,26 +486,77 @@ fillSelects();loadBlock();render();
 </body></html>
 '@
 
-$html = $htmlTemplate.Replace('__CONFIG_BASE64__', $configBase64).Replace('__FONTS_BASE64__', $fontsBase64).Replace('__BACKGROUND_DATA_URI__', $backgroundDataUri).Replace('__CONCEPT_DATA_URI__', $conceptDataUri)
+$configKeyBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($configFullPath))
+$html = $htmlTemplate.Replace('__CONFIG_BASE64__', $configBase64).Replace('__DRAFT_BASE64__', $draftBase64).Replace('__FONTS_BASE64__', $fontsBase64).Replace('__CONFIG_KEY_BASE64__', $configKeyBase64).Replace('__BACKGROUND_DATA_URI__', $backgroundDataUri).Replace('__CONCEPT_DATA_URI__', $conceptDataUri)
 $outputDirectory = Split-Path -Parent $OutputPath
 if ($outputDirectory) { New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null }
 # The saved file has no server to post to, so only the served copy gets the save button.
 [IO.File]::WriteAllText($OutputPath, $html.Replace('__SERVE__', 'false'), [Text.UTF8Encoding]::new($false))
 
 $savedConfig = $null
-if ($Serve) {
-    $savedConfig = Receive-PosterCanvasEdit $html.Replace('__SERVE__', 'true') $Port $TimeoutMinutes (-not $NoBrowser)
+if ($Detach -and -not $WorkerStatePath) {
+    if ($Port -le 0) {
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $probe.Start()
+        $Port = $probe.LocalEndpoint.Port
+        $probe.Stop()
+    }
+    $statePath = Join-Path ([System.IO.Path]::GetTempPath()) ("a4-poster-canvas-$([guid]::NewGuid().ToString('N')).json")
+    $readyTarget = if ([string]::IsNullOrWhiteSpace($ReadyPath)) { "$OutputPath.ready.json" } else { [System.IO.Path]::GetFullPath($ReadyPath) }
+    $detachedResultPath = if ([string]::IsNullOrWhiteSpace($ResultPath)) { "$OutputPath.result.json" } else { [System.IO.Path]::GetFullPath($ResultPath) }
+    Remove-Item -LiteralPath $readyTarget,$detachedResultPath -Force -ErrorAction SilentlyContinue
+    Write-PosterCanvasJsonFile $statePath (@{
+        ConfigPath = $configFullPath
+        OutputPath = $OutputPath
+        ConceptPath = $conceptFullPath
+        Port = $Port
+        TimeoutMinutes = $TimeoutMinutes
+        SaveConfigPath = $SaveConfigPath
+        DraftPath = $DraftPath
+        ReadyPath = if ([string]::IsNullOrWhiteSpace($ReadyPath)) { "$OutputPath.ready.json" } else { [System.IO.Path]::GetFullPath($ReadyPath) }
+        ResultPath = $detachedResultPath
+        NoBrowser = [bool]$NoBrowser
+    } | ConvertTo-Json -Depth 5 -Compress)
+
+    $hostExecutable = (Get-Process -Id $PID).Path
+    $workerArguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -WorkerStatePath "{1}"' -f $PSCommandPath, $statePath
+    $process = Start-Process -FilePath $hostExecutable -ArgumentList $workerArguments -WindowStyle Hidden -PassThru
+    $readyDeadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $readyDeadline -and -not (Test-Path -LiteralPath $readyTarget)) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path -LiteralPath $readyTarget)) {
+        try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+        throw "Detached canvas did not become ready. Check the worker process output for port or startup errors."
+    }
+    Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    if (-not $NoBrowser) { Start-Process "http://localhost:$Port/" | Out-Null }
+}
+elseif ($serveRequested -and -not $WorkerStatePath) {
+    $savedConfig = Receive-PosterCanvasEdit $html.Replace('__SERVE__', 'true') $Port $TimeoutMinutes (-not $NoBrowser) $DraftPath '' '' $sourceConfig
+}
+elseif ($serveRequested -and $WorkerStatePath) {
+    $savedConfig = Receive-PosterCanvasEdit $html.Replace('__SERVE__', 'true') $Port $TimeoutMinutes $false $DraftPath $ReadyPath $ResultPath $sourceConfig
 }
 
-[pscustomobject]@{
+$result = [pscustomobject]@{
     Path = $OutputPath
     Background = $backgroundPath
     Concept = if ($conceptFullPath) { $conceptFullPath } else { '(none)' }
     TextBlocks = @($config.texts).Count
     InstalledFonts = $fontNames.Count
     Bytes = (Get-Item -LiteralPath $OutputPath).Length
-    Saved = if ($savedConfig) { $SaveConfigPath } elseif ($Serve) { '(reviewer did not save)' } else { '(not served)' }
-} | Format-List
+    Saved = if ($savedConfig) { $SaveConfigPath } elseif ($Detach -and -not $WorkerStatePath) { '(detached review pending)' } elseif ($serveRequested) { '(reviewer did not save)' } else { '(not served)' }
+}
+if ($Detach -and -not $WorkerStatePath) {
+    $result | Add-Member -NotePropertyName Mode -NotePropertyValue 'detached'
+    $result | Add-Member -NotePropertyName Url -NotePropertyValue "http://localhost:$Port/"
+    $result | Add-Member -NotePropertyName ProcessId -NotePropertyValue $process.Id
+    $result | Add-Member -NotePropertyName ReadyPath -NotePropertyValue $readyTarget
+    $result | Add-Member -NotePropertyName ResultPath -NotePropertyValue $detachedResultPath
+    $result
+}
+else {
+    $result | Format-List
+}
 
 if ($savedConfig) {
     # Write the reviewed payload verbatim: a ConvertTo-Json round trip would reorder keys

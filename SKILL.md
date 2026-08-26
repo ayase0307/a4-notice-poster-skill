@@ -56,7 +56,9 @@ For typography, read [references/layout-config.md](references/layout-config.md),
 
 Every final text block must explicitly declare its requested `fontFamily`, `style`, `role`, line breaks, line height, final-resolution coordinates, and bounds. Set the approved `viewingDistanceMeters` in the config. The renderer must stop when a family does not resolve, a style is unavailable, required glyphs are missing, Chinese line-break rules fail, text is too small for its viewing distance, or text or its rectangle exceeds declared bounds. Report requested and resolved family names; localized names may differ without being substitutions.
 
-Run the canvas with `-Serve`. It opens a loopback web page in the reviewer's browser and blocks until they press `儲存並回傳 agent`, which writes the reviewed config back to disk and prints the changed fields, so the layout returns to you without anyone copying JSON by hand. `不存離開` and the `-TimeoutMinutes` timeout both write nothing.
+Run the canvas with `-Detach` when an agent is driving the review. The command returns detached metadata immediately, starts a hidden loopback worker that survives the calling command, opens the reviewer page, and reports `Url`, `ProcessId`, `ReadyPath`, and `ResultPath`. Poll `ResultPath`; its `status` is `saved`, `cancelled`, `timeout`, or `error`, and saved results include machine-readable `changes`. On save the worker writes the reviewed config back to disk, so the layout returns to you without anyone copying JSON by hand. `不存離開` and the `-TimeoutMinutes` timeout do not write the main config. Use blocking `-Serve` only for a short interactive check or smoke test.
+
+The canvas autosaves every edit to `<config>.canvas-draft.json`. Reopening the canvas restores that draft and offers a return to the original config; final save clears it. Reviewers can toggle a grid and finished-output preview, and can drag near another text box to snap to shared edges or centers. Holding `Alt` suppresses snapping.
 
 The browser canvas is a positioning aid. The production-rendered PNG and its 100% text crops are the evidence for Approval 3.
 

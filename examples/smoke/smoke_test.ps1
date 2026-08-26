@@ -111,6 +111,17 @@ try {
     if ($canvasFonts -notcontains 'Microsoft JhengHei') {
         throw 'HTML canvas dropped the configured English font alias from its selector.'
     }
+    foreach ($editorMarker in @(
+        'id="gridToggle"',
+        'id="previewToggle"',
+        'id="snapThreshold"',
+        'function scheduleDraft',
+        'function snapBox'
+    )) {
+        if ($canvasHtml -notlike "*$editorMarker*") {
+            throw "HTML canvas is missing the editor assist feature: $editorMarker"
+        }
+    }
 
     # Serve mode: the reviewer's edit must round-trip back to disk, and a malformed
     # payload must never overwrite the config.
@@ -125,8 +136,13 @@ try {
     $reviewed.texts[0].x = 999
     $reviewedBody = $reviewed | ConvertTo-Json -Depth 20
 
-    $poster = Start-Job -ArgumentList "http://localhost:$servePort", $reviewedBody -ScriptBlock {
-        param($BaseUrl, $Body)
+    $serveDraftPath = Join-Path $testRoot 'serve-draft.json'
+    $preSave = Get-Content -Raw -Encoding UTF8 -LiteralPath $serveConfigPath | ConvertFrom-Json
+    $preSave.texts[0].x = 888
+    $preSaveBody = $preSave | ConvertTo-Json -Depth 20
+
+    $poster = Start-Job -ArgumentList "http://localhost:$servePort", $reviewedBody, $preSaveBody, $serveDraftPath -ScriptBlock {
+        param($BaseUrl, $Body, $AutosaveBody, $DraftPath)
         for ($attempt = 0; $attempt -lt 60; $attempt++) {
             try { Invoke-WebRequest -Uri "$BaseUrl/" -UseBasicParsing -TimeoutSec 5 | Out-Null; break }
             catch { Start-Sleep -Milliseconds 500 }
@@ -134,11 +150,13 @@ try {
         $rejected = $false
         try { Invoke-WebRequest -Uri "$BaseUrl/save" -Method Post -Body 'not json' -ContentType 'application/json' -UseBasicParsing | Out-Null }
         catch { $rejected = $true }
+        Invoke-WebRequest -Uri "$BaseUrl/autosave" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($AutosaveBody)) -ContentType 'application/json' -UseBasicParsing | Out-Null
+        if (-not (Test-Path -LiteralPath $DraftPath)) { throw 'Autosave did not write its draft payload.' }
         Invoke-WebRequest -Uri "$BaseUrl/save" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($Body)) -ContentType 'application/json' -UseBasicParsing | Out-Null
         return $rejected
     }
 
-    & $canvasBuilder -ConfigPath $serveConfigPath -OutputPath (Join-Path $testRoot 'serve-canvas.html') -Serve -Port $servePort -TimeoutMinutes 2 -SaveConfigPath $reviewedPath -NoBrowser | Out-Null
+    & $canvasBuilder -ConfigPath $serveConfigPath -OutputPath (Join-Path $testRoot 'serve-canvas.html') -Serve -Port $servePort -TimeoutMinutes 2 -SaveConfigPath $reviewedPath -DraftPath $serveDraftPath -NoBrowser | Out-Null
     $rejectedGarbage = [bool](Receive-Job -Job $poster -Wait)
     Remove-Job -Job $poster -Force
 
@@ -148,6 +166,84 @@ try {
     if ([int]$savedBack.texts[0].x -ne 999) { throw "Serve mode lost the reviewer's edit: x is $($savedBack.texts[0].x)." }
     $untouched = Get-Content -Raw -Encoding UTF8 -LiteralPath $serveConfigPath | ConvertFrom-Json
     if ([int]$untouched.texts[0].x -eq 999) { throw 'Serve mode overwrote the source config despite -SaveConfigPath.' }
+    if (Test-Path -LiteralPath $serveDraftPath) { throw 'A completed save left its transient canvas draft behind.' }
+
+    # Autosave must survive the browser tab and be loaded by the next canvas build.
+    $draftConfigPath = Join-Path $testRoot 'draft-config.json'
+    Copy-Item -LiteralPath $serveConfigPath -Destination $draftConfigPath
+    $draftPath = Join-Path $testRoot 'draft-config.canvas-draft.json'
+    $draftReviewedPath = Join-Path $testRoot 'draft-reviewed.json'
+    $drafted = Get-Content -Raw -Encoding UTF8 -LiteralPath $draftConfigPath | ConvertFrom-Json
+    $drafted.texts[0].x = 777
+    $draftedBody = $drafted | ConvertTo-Json -Depth 20
+
+    $draftProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $draftProbe.Start()
+    $draftPort = $draftProbe.LocalEndpoint.Port
+    $draftProbe.Stop()
+    $draftPoster = Start-Job -ArgumentList "http://localhost:$draftPort", $draftedBody -ScriptBlock {
+        param($BaseUrl, $Body)
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            try { Invoke-WebRequest -Uri "$BaseUrl/" -UseBasicParsing -TimeoutSec 5 | Out-Null; break }
+            catch { Start-Sleep -Milliseconds 500 }
+        }
+        Invoke-WebRequest -Uri "$BaseUrl/autosave" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($Body)) -ContentType 'application/json' -UseBasicParsing | Out-Null
+        Invoke-WebRequest -Uri "$BaseUrl/cancel" -Method Post -UseBasicParsing | Out-Null
+    }
+    & $canvasBuilder -ConfigPath $draftConfigPath -OutputPath (Join-Path $testRoot 'draft-canvas.html') -Serve -Port $draftPort -TimeoutMinutes 2 -SaveConfigPath $draftReviewedPath -DraftPath $draftPath -NoBrowser | Out-Null
+    Receive-Job -Job $draftPoster -Wait | Out-Null
+    Remove-Job -Job $draftPoster -Force
+    if (-not (Test-Path -LiteralPath $draftPath)) { throw 'Cancel mode discarded the reviewer draft.' }
+    $savedDraft = Get-Content -Raw -Encoding UTF8 -LiteralPath $draftPath | ConvertFrom-Json
+    if ([int]$savedDraft.texts[0].x -ne 777) { throw 'Autosave lost the reviewer edit.' }
+
+    $reloadCanvasPath = Join-Path $testRoot 'draft-reload-canvas.html'
+    & $canvasBuilder -ConfigPath $draftConfigPath -OutputPath $reloadCanvasPath -DraftPath $draftPath | Out-Null
+    $reloadHtml = Get-Content -Raw -Encoding UTF8 -LiteralPath $reloadCanvasPath
+    $storedDraftMatch = [regex]::Match($reloadHtml, "const storedDraftEncoded='([^']*)'")
+    if (-not $storedDraftMatch.Success) { throw 'Reloaded canvas omitted the stored draft slot.' }
+    if ([string]::IsNullOrWhiteSpace($storedDraftMatch.Groups[1].Value)) { throw 'Reloaded canvas did not embed the stored draft.' }
+    $reloadedDraft = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($storedDraftMatch.Groups[1].Value)) | ConvertFrom-Json
+    if ([int]$reloadedDraft.texts[0].x -ne 777) { throw 'Reloaded canvas did not restore the stored draft.' }
+
+    # Detached mode keeps the listener alive independently of the calling command.
+    $detachConfigPath = Join-Path $testRoot 'detach-config.json'
+    Copy-Item -LiteralPath $serveConfigPath -Destination $detachConfigPath
+    $detachReviewedPath = Join-Path $testRoot 'detach-reviewed.json'
+    $detachDraftPath = Join-Path $testRoot 'detach-draft.json'
+    $detachReadyPath = Join-Path $testRoot 'detach-ready.json'
+    $detachResultPath = Join-Path $testRoot 'detach-result.json'
+    $detachProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $detachProbe.Start()
+    $detachPort = $detachProbe.LocalEndpoint.Port
+    $detachProbe.Stop()
+
+    $detached = & $canvasBuilder -ConfigPath $detachConfigPath -OutputPath (Join-Path $testRoot 'detach-canvas.html') -Detach -Port $detachPort -TimeoutMinutes 2 -SaveConfigPath $detachReviewedPath -DraftPath $detachDraftPath -ReadyPath $detachReadyPath -ResultPath $detachResultPath -NoBrowser
+    if ($detached.Mode -ne 'detached') { throw "Expected detached serve metadata, got mode '$($detached.Mode)'." }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $detachReadyPath)) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path -LiteralPath $detachReadyPath)) { throw 'Detached canvas did not report readiness.' }
+
+    try {
+        $detachedEdited = Get-Content -Raw -Encoding UTF8 -LiteralPath $detachConfigPath | ConvertFrom-Json
+        $detachedEdited.texts[0].x = 1234
+        $detachedBody = $detachedEdited | ConvertTo-Json -Depth 20
+        Invoke-WebRequest -Uri "$($detached.Url)save" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($detachedBody)) -ContentType 'application/json' -UseBasicParsing | Out-Null
+        $deadline = (Get-Date).AddSeconds(10)
+        while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $detachResultPath)) { Start-Sleep -Milliseconds 100 }
+        if (-not (Test-Path -LiteralPath $detachResultPath)) { throw 'Detached canvas did not return its result.' }
+        $detachResult = Get-Content -Raw -Encoding UTF8 -LiteralPath $detachResultPath | ConvertFrom-Json
+        if ([string]$detachResult.status -ne 'saved') { throw "Detached result status was '$($detachResult.status)'." }
+        if (-not ($detachResult.PSObject.Properties.Name -contains 'changes') -or @($detachResult.changes).Count -ne 1) { throw 'Detached result omitted the machine-readable field changes.' }
+        if (-not (Test-Path -LiteralPath $detachReviewedPath)) { throw 'Detached canvas did not write the reviewed config.' }
+        $detachedSaved = Get-Content -Raw -Encoding UTF8 -LiteralPath $detachReviewedPath | ConvertFrom-Json
+        if ([int]$detachedSaved.texts[0].x -ne 1234) { throw "Detached save lost the reviewer edit: x is $($detachedSaved.texts[0].x)." }
+    }
+    finally {
+        if ($detached.ProcessId -and (Get-Process -Id $detached.ProcessId -ErrorAction SilentlyContinue)) {
+            Stop-Process -Id $detached.ProcessId -Force
+        }
+    }
 
     . (Join-Path $repoRoot 'scripts\layout_checks.ps1')
     Assert-ViewingDistanceMinimum 1 'title' 120
@@ -225,6 +321,9 @@ try {
         ContrastGuard = 'isolated failure verified'
         BackgroundNoise = 'warning without hard failure verified'
         ServeRoundTrip = 'edit saved back, bad payload rejected'
+        EditorAssist = 'snap guides, grid, preview, and autosave controls verified'
+        DraftPersistence = 'autosave restored on reload and cleared on final save'
+        DetachedServe = 'listener survived command return and saved back'
     } | Format-List
 }
 finally {
